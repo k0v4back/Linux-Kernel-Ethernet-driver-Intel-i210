@@ -1,0 +1,32 @@
+# Linux kernel module build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+.*.o.*
+
+# Kbuild generated files
+Module.symvers
+modules.order
+
+# Generated dependency files
+*.mod
+*.cmd
+.*.cmd
+
+# Kernel build metadata
+.tmp_versions/
+
+# Local backup / experimental files
+*.orig
+*.rej
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Temporary files
+*~
+*.swp
+*.swo
