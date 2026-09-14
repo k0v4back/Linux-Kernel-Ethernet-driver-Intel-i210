@@ -8,6 +8,8 @@
 #define EERD_ADDR_SHIFT    2
 #define EERD_DATA_SHIFT    16
 
+#define DRV_NAME "i210"
+
 /* Ethernet MAC address */
 #define I210_NVM_MAC_ADDR_W0          0x00
 #define I210_NVM_MAC_ADDR_W1          0x01

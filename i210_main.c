@@ -7,62 +7,8 @@
 #include <linux/ethtool.h>
 
 #include "i210_defines.h"
-
-#define DRV_NAME "i210"
-
-struct i210_hw {
-	void __iomem *hw_addr;
-	void __iomem *flash_address;
-};
-
-struct i210_adapter {
-	struct pci_dev *pdev;
-	struct net_device *netdev;
-	struct i210_hw hw;
-
-	struct napi_struct napi;
-};
-
-static int i210_read_nvm_word(struct i210_adapter *adapter, u16 offset, u16 *data)
-{
-	u32 value;
-	int timeout = 1000;
-
-	/* Start NVM read */
-	value = EERD_START | ((u32)offset << EERD_ADDR_SHIFT);
-
-	writel(value, adapter->hw.hw_addr + I210_EERD);
-
-	do {
-		value = readl(adapter->hw.hw_addr + I210_EERD);
-
-		if (value & EERD_DONE) {
-			*data = (u16)(value >> EERD_DATA_SHIFT);
-			return 0;
-		}
-
-		udelay(1);
-	} while (--timeout);
-
-	pr_err(DRV_NAME ": NVM read timeout, offset=0x%04x\n", offset);
-
-	return -ETIMEDOUT;
-}
-
-static int i210_probe(struct pci_dev *pdev,
-		      const struct pci_device_id *ent);
-static void i210_remove(struct pci_dev *pdev);
-static void i210_shutdown(struct pci_dev *pdev);
-
-static int i210_open(struct net_device *netdev);
-static int i210_close(struct net_device *netdev);
-static netdev_tx_t i210_xmit(struct sk_buff *skb,
-			     struct net_device *netdev);
-
-static int i210_clean(struct napi_struct *napi, int budget);
-
-static void i210_get_drvinfo(struct net_device *netdev,
-			     struct ethtool_drvinfo *drvinfo);
+#include "i210_helpers.h"
+#include "i210.h"
 
 
 static const struct pci_device_id i210_pci_tbl[] = {
