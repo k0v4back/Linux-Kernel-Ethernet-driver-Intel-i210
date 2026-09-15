@@ -33,10 +33,18 @@ static struct pci_driver i210_driver = {
 static int i210_open(struct net_device *netdev)
 {
 	struct i210_adapter *adapter = netdev_priv(netdev);
+	int err;
 
 	pr_info(DRV_NAME ": i210_open()\n");
 
-	netif_start_queue(netdev);
+	err = i210_reset_hw(adapter);
+	if (err) {
+		pr_err(DRV_NAME ": hardware reset failed: %d\n", err);
+		return err;
+	}
+
+	pr_info(DRV_NAME ": hardware initialization completed\n");
+	// netif_start_queue(netdev);
 
 	return 0;
 }

@@ -119,4 +119,16 @@
 #define I210_NVM_FW_RO_UPDATE_VER     0x50
 #define I210_NVM_FW_MODULE_PTR        0x51
 
+/* Device Control Register */
+#define I210_CTRL              0x00000
+#define I210_CTRL_RST          BIT(26)
+
+/* Device Status Register */
+#define I210_STATUS            0x00008
+#define I210_STATUS_PF_RST_DONE BIT(21)
+
+/* EEPROM/NVM Control Register */
+#define I210_EEC               0x12010
+#define I210_EEC_AUTO_RD       BIT(9)
+
 #endif /* _I210_DEFINES_H_ */
