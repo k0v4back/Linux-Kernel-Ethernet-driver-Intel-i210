@@ -12,4 +12,6 @@ static void i210_set_mac_address(struct i210_adapter *adapter, const u8 *mac);
 static void i210_configure_tx(struct i210_adapter *adapter);
 static void i210_configure_rx(struct i210_adapter *adapter);
 
+static int i210_setup_tx_resources(struct i210_adapter *adapter);
+
 #endif /* _I210_HELPERS_H_ */

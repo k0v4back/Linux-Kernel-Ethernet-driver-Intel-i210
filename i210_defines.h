@@ -8,6 +8,9 @@
 #define EERD_ADDR_SHIFT    2
 #define EERD_DATA_SHIFT    16
 
+#define I210_TX_DESC_COUNT    64
+
+
 #define DRV_NAME "i210"
 
 /* Ethernet MAC address */
@@ -150,5 +153,13 @@
 #define I210_RCTL_MPE      BIT(4)
 #define I210_RCTL_BAM      BIT(15)
 #define I210_RCTL_SECRC    BIT(26)
+
+/* TX descriptor ring - queue 0 */
+#define I210_TDBAL(q)       (0x03800 + ((q) * 0x100))
+#define I210_TDBAH(q)       (0x03804 + ((q) * 0x100))
+#define I210_TDLEN(q)       (0x03808 + ((q) * 0x100))
+#define I210_TDH(q)         (0x03810 + ((q) * 0x100))
+#define I210_TDT(q)         (0x03818 + ((q) * 0x100))
+#define I210_TXDCTL(q)      (0x03828 + ((q) * 0x100))
 
 #endif /* _I210_DEFINES_H_ */

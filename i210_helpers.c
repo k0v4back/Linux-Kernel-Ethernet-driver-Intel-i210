@@ -176,3 +176,9 @@ static void i210_configure_rx(struct i210_adapter *adapter)
 	writel(rctl, hw + I210_RCTL);
 	pr_info(DRV_NAME ": RCTL = 0x%08x\n", rctl);
 }
+
+
+static int i210_setup_tx_resources(struct i210_adapter *adapter)
+{
+	
+}
