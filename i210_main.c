@@ -43,6 +43,15 @@ static int i210_open(struct net_device *netdev)
 		return err;
 	}
 
+	/*
+	 * Set MAC address
+	 * TX configuration
+	 * RX configuration
+	 */
+	i210_set_mac_address(adapter, netdev->dev_addr);
+	i210_configure_tx(adapter);
+	i210_configure_rx(adapter);
+
 	pr_info(DRV_NAME ": hardware initialization completed\n");
 	// netif_start_queue(netdev);
 
