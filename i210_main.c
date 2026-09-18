@@ -10,6 +10,20 @@
 #include "i210_helpers.h"
 #include "i210.h"
 
+static int i210_probe(struct pci_dev *pdev,
+		      const struct pci_device_id *ent);
+static void i210_remove(struct pci_dev *pdev);
+static void i210_shutdown(struct pci_dev *pdev);
+
+static int i210_open(struct net_device *netdev);
+static int i210_close(struct net_device *netdev);
+static netdev_tx_t i210_xmit(struct sk_buff *skb,
+			     struct net_device *netdev);
+
+static int i210_clean(struct napi_struct *napi, int budget);
+
+static void i210_get_drvinfo(struct net_device *netdev,
+			     struct ethtool_drvinfo *drvinfo);
 
 static const struct pci_device_id i210_pci_tbl[] = {
 	{
@@ -43,19 +57,30 @@ static int i210_open(struct net_device *netdev)
 		return err;
 	}
 
-	/*
-	 * Set MAC address
-	 * TX configuration
-	 * RX configuration
-	 */
 	i210_set_mac_address(adapter, netdev->dev_addr);
+
+	/*
+	 * Setup TX
+	 */
+	err = i210_setup_tx_resources(adapter);
+	if (err) {
+		pr_err(DRV_NAME ": TX resource setup failed\n");
+		goto err_reset;
+	}
 	i210_configure_tx(adapter);
+
+
+	/*
+	 * Setup RX
+	 */
 	i210_configure_rx(adapter);
 
 	pr_info(DRV_NAME ": hardware initialization completed\n");
-	// netif_start_queue(netdev);
 
 	return 0;
+
+err_reset:
+	return err;
 }
 
 static int i210_close(struct net_device *netdev)
@@ -74,7 +99,7 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
 {
 	struct i210_adapter *adapter = netdev_priv(netdev);
 
-	pr_info(DRV_NAME ": i210_xmit()\n");
+	// pr_info(DRV_NAME ": i210_xmit()\n");
 
 	dev_kfree_skb(skb);
 

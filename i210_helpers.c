@@ -8,7 +8,7 @@
 
 #include "i210_helpers.h"
 
-static int i210_read_nvm_word(struct i210_adapter *adapter, u16 offset, u16 *data)
+int i210_read_nvm_word(struct i210_adapter *adapter, u16 offset, u16 *data)
 {
 	u32 value;
 	int timeout = 1000;
@@ -38,7 +38,7 @@ static int i210_read_nvm_word(struct i210_adapter *adapter, u16 offset, u16 *dat
 /*
  * 4.3.1 Software Reset (RST)
  */
-static int i210_reset_hw(struct i210_adapter *adapter)
+int i210_reset_hw(struct i210_adapter *adapter)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 ctrl;
@@ -104,7 +104,7 @@ static int i210_reset_hw(struct i210_adapter *adapter)
  * RAH:
  *   mac[4] mac[5]
  */
-static void i210_set_mac_address(struct i210_adapter *adapter, const u8 *mac)
+void i210_set_mac_address(struct i210_adapter *adapter, const u8 *mac)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 ral, rah;
@@ -124,7 +124,7 @@ static void i210_set_mac_address(struct i210_adapter *adapter, const u8 *mac)
 }
 
 
-static void i210_configure_tx(struct i210_adapter *adapter)
+void i210_configure_tx(struct i210_adapter *adapter)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 tctl;
@@ -151,7 +151,7 @@ static void i210_configure_tx(struct i210_adapter *adapter)
 }
 
 
-static void i210_configure_rx(struct i210_adapter *adapter)
+void i210_configure_rx(struct i210_adapter *adapter)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 rctl;
@@ -178,7 +178,148 @@ static void i210_configure_rx(struct i210_adapter *adapter)
 }
 
 
-static int i210_setup_tx_resources(struct i210_adapter *adapter)
+/*
+ *  i210_setup_tx_resources - allocate Tx resources (Descriptors)
+ *
+ *  Similar int igb_setup_tx_resources(struct igb_ring *tx_ring)
+ */
+int i210_setup_tx_resources(struct i210_adapter *adapter)
 {
-	
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	struct pci_dev *pdev = adapter->pdev;
+	void __iomem *hw = adapter->hw.hw_addr;
+	size_t size;
+	u32 tdh;
+	u32 tdt;
+
+	pr_info(DRV_NAME ": setting up TX resources\n");
+
+	tx_ring->count = I210_TX_DESC_COUNT;
+	tx_ring->size = tx_ring->count * sizeof(struct i210_tx_desc);
+
+	/*
+	 * TDLEN must be 128-byte aligned
+	 * 64 descriptors * 16 bytes = 1024 bytes, already aligned
+	 */
+	if (tx_ring->size & 0x7f) {
+		pr_err(DRV_NAME ": invalid TX ring size: %u\n", tx_ring->size);
+		return -EINVAL;
+	}
+
+	/*
+	 * Allocate software information for each descriptor
+	 * This is CPU-only memory, NIC never see it
+	 */
+	tx_ring->buffer_info = kcalloc(
+		tx_ring->count, 
+		sizeof(*tx_ring->buffer_info), 
+		GFP_KERNEL
+	);
+	if (!tx_ring->buffer_info) {
+		pr_err(DRV_NAME ": failed to allocate TX buffer info\n");
+		return -ENOMEM;
+	}
+
+	/*
+	 * Allocate DMA-coherent memory for descriptor ring
+	 *
+	 * tx_ring->desc: CPU virtual address
+	 * tx_ring->dma: DMA address visible for I210
+	 */
+	tx_ring->desc = dma_alloc_coherent(
+		&pdev->dev,
+		tx_ring->size,
+		&tx_ring->dma,
+		GFP_KERNEL
+	);
+	if (!tx_ring->desc) {
+		pr_err(DRV_NAME ": failed to allocate TX descriptor ring\n");
+		kfree(tx_ring->buffer_info);
+		tx_ring->buffer_info = NULL;
+		return -ENOMEM;
+	}
+
+	memset(tx_ring->desc, 0, tx_ring->size);
+
+	/*
+	 * Software producer/consumer indexes.
+	 */
+	tx_ring->next_to_use = 0;
+	tx_ring->next_to_clean = 0;
+
+	pr_info(DRV_NAME ": TX ring allocated\n");
+	pr_info(DRV_NAME ": descriptors      = %u\n", tx_ring->count);
+	pr_info(DRV_NAME ": descriptor size  = %zu\n", sizeof(struct i210_tx_desc));
+	pr_info(DRV_NAME ": ring size        = %u bytes\n", tx_ring->size);
+	pr_info(DRV_NAME ": CPU address      = %px\n", tx_ring->desc);
+	pr_info(DRV_NAME ": DMA address      = %pad\n", &tx_ring->dma);
+
+	/*
+	 * Disable queue before programming it
+	 */
+	writel(0, hw + I210_TXDCTL(0));
+
+	/*
+	 * Program hardware with physical/DMA address of descriptor ring
+	 */
+	writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
+	writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
+
+	/*
+	 * Set descriptor ring length
+	 */
+	writel(tx_ring->size, hw + I210_TDLEN(0));
+
+	/*
+	 * Start with an empty queue
+	 * TDH: Tx Descriptor Head
+	 * TDT: Tx Descriptor Tail
+	 */
+	tdh = readl(hw + I210_TDH(0));
+	writel(0, hw + I210_TDT(0));
+	tdt = readl(hw + I210_TDT(0));
+
+	pr_info(DRV_NAME ": TX hardware registers:\n");
+	pr_info(DRV_NAME ": TDBAL = 0x%08x\n", readl(hw + I210_TDBAL(0)));
+	pr_info(DRV_NAME ": TDBAH = 0x%08x\n", readl(hw + I210_TDBAH(0)));
+	pr_info(DRV_NAME ": TDLEN = 0x%08x\n", readl(hw + I210_TDLEN(0)));
+	pr_info(DRV_NAME ": TDH   = 0x%08x\n", tdh);
+	pr_info(DRV_NAME ": TDT   = 0x%08x\n", tdt);
+
+	pr_info(DRV_NAME ": TX resources ready\n");
+
+	return 0;
+}
+
+
+/*
+ *  i210_free_tx_resources - Free Tx Resources per Queue
+ *
+ *  Similar int igb_free_tx_resources(struct igb_ring *tx_ring)
+ */
+void i210_free_tx_resources(struct i210_adapter *adapter)
+{
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	struct pci_dev *pdev = adapter->pdev;
+
+	pr_info(DRV_NAME ": freeing TX resources\n");
+
+	if (tx_ring->desc) {
+		dma_free_coherent(
+			&pdev->dev,
+			tx_ring->size,
+			tx_ring->desc,
+			tx_ring->dma
+		);
+		tx_ring->desc = NULL;
+		tx_ring->dma = 0;
+	}
+
+	kfree(tx_ring->buffer_info);
+	tx_ring->buffer_info = NULL;
+
+	tx_ring->count = 0;
+	tx_ring->size = 0;
+	tx_ring->next_to_use = 0;
+	tx_ring->next_to_clean = 0;
 }
