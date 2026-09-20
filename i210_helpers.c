@@ -187,10 +187,7 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 {
 	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
 	struct pci_dev *pdev = adapter->pdev;
-	void __iomem *hw = adapter->hw.hw_addr;
 	size_t size;
-	u32 tdh;
-	u32 tdt;
 
 	pr_info(DRV_NAME ": setting up TX resources\n");
 
@@ -254,38 +251,6 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 	pr_info(DRV_NAME ": CPU address      = %px\n", tx_ring->desc);
 	pr_info(DRV_NAME ": DMA address      = %pad\n", &tx_ring->dma);
 
-	/*
-	 * Disable queue before programming it
-	 */
-	writel(0, hw + I210_TXDCTL(0));
-
-	/*
-	 * Program hardware with physical/DMA address of descriptor ring
-	 */
-	writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
-	writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
-
-	/*
-	 * Set descriptor ring length
-	 */
-	writel(tx_ring->size, hw + I210_TDLEN(0));
-
-	/*
-	 * Start with an empty queue
-	 * TDH: Tx Descriptor Head
-	 * TDT: Tx Descriptor Tail
-	 */
-	tdh = readl(hw + I210_TDH(0));
-	writel(0, hw + I210_TDT(0));
-	tdt = readl(hw + I210_TDT(0));
-
-	pr_info(DRV_NAME ": TX hardware registers:\n");
-	pr_info(DRV_NAME ": TDBAL = 0x%08x\n", readl(hw + I210_TDBAL(0)));
-	pr_info(DRV_NAME ": TDBAH = 0x%08x\n", readl(hw + I210_TDBAH(0)));
-	pr_info(DRV_NAME ": TDLEN = 0x%08x\n", readl(hw + I210_TDLEN(0)));
-	pr_info(DRV_NAME ": TDH   = 0x%08x\n", tdh);
-	pr_info(DRV_NAME ": TDT   = 0x%08x\n", tdt);
-
 	pr_info(DRV_NAME ": TX resources ready\n");
 
 	return 0;
@@ -294,6 +259,10 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 
 /*
  *  i210_free_tx_resources - Free Tx Resources per Queue
+ *
+ * Setup TX resources:
+ * - allocate descriptors
+ * - allocate buffer_info
  *
  *  Similar int igb_free_tx_resources(struct igb_ring *tx_ring)
  */
@@ -322,4 +291,57 @@ void i210_free_tx_resources(struct i210_adapter *adapter)
 	tx_ring->size = 0;
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
+}
+
+
+int i210_configure_tx_ring(struct i210_adapter *adapter)
+{
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	void __iomem *hw = adapter->hw.hw_addr;
+	u32 txdctl;
+	int timeout = 1000;
+
+	writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
+	writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
+	writel(tx_ring->size, hw + I210_TDLEN(0));
+
+	writel(0, hw + I210_TDH(0));
+	writel(0, hw + I210_TDT(0));
+
+	txdctl = readl(hw + I210_TXDCTL(0));
+	txdctl |= I210_TXDCTL_ENABLE;
+	writel(txdctl, hw + I210_TXDCTL(0));
+	do {
+		txdctl = readl(hw + I210_TXDCTL(0));
+		if (txdctl & I210_TXDCTL_ENABLE)
+			return 0;
+		udelay(1);
+	} while (--timeout);
+
+	pr_err(DRV_NAME ": TX queue enable timeout\n");
+
+	return -ETIMEDOUT;
+}
+
+
+void i210_enable_tx(struct i210_adapter *adapter)
+{
+    void __iomem *hw = adapter->hw.hw_addr;
+    u32 tctl;
+
+    tctl = readl(hw + I210_TCTL);
+    tctl |= I210_TCTL_EN;
+    writel(tctl, hw + I210_TCTL);
+    pr_info(DRV_NAME ": TCTL = 0x%08x\n", readl(hw + I210_TCTL));
+}
+
+
+bool i210_tx_ring_full(struct i210_tx_ring *tx_ring)
+{
+	u16 next;
+	next = tx_ring->next_to_use + 1;
+	if (next == tx_ring->count)
+		next = 0;
+
+	return next == tx_ring->next_to_clean;
 }

@@ -60,13 +60,24 @@ static int i210_open(struct net_device *netdev)
 	i210_set_mac_address(adapter, netdev->dev_addr);
 
 	/*
-	 * Setup TX
+	 * Setup TX resources
 	 */
 	err = i210_setup_tx_resources(adapter);
 	if (err) {
 		pr_err(DRV_NAME ": TX resource setup failed\n");
 		goto err_reset;
 	}
+
+	/*
+	 * Configure TX ring
+	 */
+	err = i210_configure_tx_ring(adapter);
+	if (err)
+		goto err_free_tx;
+
+	/*
+	 * Configure TX
+	 */
 	i210_configure_tx(adapter);
 
 
@@ -81,6 +92,8 @@ static int i210_open(struct net_device *netdev)
 
 err_reset:
 	return err;
+err_free_tx:
+	return err;
 }
 
 static int i210_close(struct net_device *netdev)
@@ -91,21 +104,73 @@ static int i210_close(struct net_device *netdev)
 
 	netif_stop_queue(netdev);
 
+	// i210_disable_tx(adapter);
+	// i210_clean_tx(adapter);
+	i210_free_tx_resources(adapter);
+
 	return 0;
 }
 
 static netdev_tx_t i210_xmit(struct sk_buff *skb,
-			     struct net_device *netdev)
+                             struct net_device *netdev)
 {
-	struct i210_adapter *adapter = netdev_priv(netdev);
+    struct i210_adapter *adapter = netdev_priv(netdev);
+    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+    struct i210_tx_desc *tx_desc;
+    struct i210_tx_buffer *tx_buffer;
+    dma_addr_t dma;
+    u16 i;
+    u32 cmd;
 
-	// pr_info(DRV_NAME ": i210_xmit()\n");
+	if (i210_tx_ring_full(tx_ring)) {
+		netif_stop_queue(netdev);
+		return NETDEV_TX_BUSY;
+	}
 
-	dev_kfree_skb(skb);
+    i = tx_ring->next_to_use;
 
-	return NETDEV_TX_OK;
+    tx_desc = &tx_ring->desc[i];
+    tx_buffer = &tx_ring->buffer_info[i];
+
+    dma = dma_map_single(
+	&adapter->pdev->dev,
+	skb->data,
+	skb->len,
+	DMA_TO_DEVICE
+	);
+
+    if (dma_mapping_error(&adapter->pdev->dev, dma)) {
+        dev_kfree_skb_any(skb);
+        return NETDEV_TX_OK;
+    }
+
+    tx_buffer->skb = skb;
+    tx_buffer->dma = dma;
+    tx_buffer->len = skb->len;
+
+    tx_desc->buffer_addr = cpu_to_le64(dma);
+
+    cmd = skb->len;
+    cmd |= I210_TXD_CMD_EOP;
+    cmd |= I210_TXD_CMD_IFCS;
+    cmd |= I210_TXD_CMD_RS;
+    cmd |= I210_TXD_CMD_DEXT;
+    cmd |= I210_TXD_DTYP_ADV << I210_TXD_DTYP_SHIFT;
+
+    tx_desc->cmd_type_len = cpu_to_le32(cmd);
+    tx_desc->olinfo_status = 0;
+
+    wmb();
+
+    i++;
+    if (i == tx_ring->count)
+        i = 0;
+
+    tx_ring->next_to_use = i;
+    writel(i, adapter->hw.hw_addr + I210_TDT(0));
+
+    return NETDEV_TX_OK;
 }
-
 
 static void i210_get_drvinfo(struct net_device *netdev,
 			     struct ethtool_drvinfo *drvinfo)
@@ -217,7 +282,7 @@ static int i210_probe(struct pci_dev *pdev,
 	for (i = 0; i < 3; i++) {
 		err = i210_read_nvm_word(adapter, i, &nvm_word[i]);
 		if (err)
-			return err;
+			goto err_napi;
 
 		pr_info(DRV_NAME ": NVM word[0x%02x] = 0x%04x\n", i, nvm_word[i]);
 	}

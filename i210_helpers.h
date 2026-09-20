@@ -14,5 +14,9 @@ void i210_configure_rx(struct i210_adapter *adapter);
 
 int i210_setup_tx_resources(struct i210_adapter *adapter);
 void i210_free_tx_resources(struct i210_adapter *adapter);
+int i210_configure_tx_ring(struct i210_adapter *adapter);
+void i210_enable_tx(struct i210_adapter *adapter);
+
+bool i210_tx_ring_full(struct i210_tx_ring *tx_ring);
 
 #endif /* _I210_HELPERS_H_ */

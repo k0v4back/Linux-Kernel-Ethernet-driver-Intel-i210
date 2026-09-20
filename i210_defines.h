@@ -161,5 +161,12 @@
 #define I210_TDH(q)         (0x03810 + ((q) * 0x100))
 #define I210_TDT(q)         (0x03818 + ((q) * 0x100))
 #define I210_TXDCTL(q)      (0x03828 + ((q) * 0x100))
+#define I210_TXDCTL_ENABLE BIT(25)
+#define I210_TXD_CMD_EOP   BIT(0)
+#define I210_TXD_CMD_IFCS  BIT(1)
+#define I210_TXD_CMD_RS    BIT(3)
+#define I210_TXD_CMD_DEXT  BIT(5)
+#define I210_TXD_DTYP_SHIFT 20
+#define I210_TXD_DTYP_ADV   0x3
 
 #endif /* _I210_DEFINES_H_ */

@@ -39,6 +39,11 @@ sudo insmod i210_driver.ko
 dmesg | tail -n20
 ```
 
+8. Set up interface
+```
+sudo ip link set eth0 up
+```
+
 
 ### Indexing linux kernel and use compile commands at the project
 
