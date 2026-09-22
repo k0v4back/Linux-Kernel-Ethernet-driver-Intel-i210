@@ -299,7 +299,8 @@ int i210_configure_tx_ring(struct i210_adapter *adapter)
 	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 txdctl;
-	int timeout = 1000;
+
+	pr_info(DRV_NAME ": configuring TX ring\n");
 
 	writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
 	writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
@@ -309,18 +310,21 @@ int i210_configure_tx_ring(struct i210_adapter *adapter)
 	writel(0, hw + I210_TDT(0));
 
 	txdctl = readl(hw + I210_TXDCTL(0));
+	pr_info(DRV_NAME ": TXDCTL before enable = 0x%08x\n", txdctl);
+
 	txdctl |= I210_TXDCTL_ENABLE;
 	writel(txdctl, hw + I210_TXDCTL(0));
-	do {
-		txdctl = readl(hw + I210_TXDCTL(0));
-		if (txdctl & I210_TXDCTL_ENABLE)
-			return 0;
-		udelay(1);
-	} while (--timeout);
 
-	pr_err(DRV_NAME ": TX queue enable timeout\n");
+	txdctl = readl(hw + I210_TXDCTL(0));
+	pr_info(DRV_NAME ": TXDCTL after enable = 0x%08x\n", txdctl);
 
-	return -ETIMEDOUT;
+	/* Check realy enable or not */
+	if (!(txdctl & I210_TXDCTL_ENABLE)) {
+		pr_err(DRV_NAME ": TX queue failed to enable\n");
+		return -ETIMEDOUT;
+	}
+
+	return 0;
 }
 
 

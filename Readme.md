@@ -44,6 +44,16 @@ dmesg | tail -n20
 sudo ip link set eth0 up
 ```
 
+9. Check ip route
+```
+ip route get 192.168.1.1
+```
+
+10. Through a specific interface
+```
+sudo ping -I eth0 192.168.1.1
+```
+
 
 ### Indexing linux kernel and use compile commands at the project
 

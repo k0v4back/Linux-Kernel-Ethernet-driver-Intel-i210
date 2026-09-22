@@ -79,20 +79,24 @@ static int i210_open(struct net_device *netdev)
 	 * Configure TX
 	 */
 	i210_configure_tx(adapter);
-
+	i210_enable_tx(adapter);
 
 	/*
 	 * Setup RX
 	 */
 	i210_configure_rx(adapter);
 
+	netif_start_queue(netdev);
+
 	pr_info(DRV_NAME ": hardware initialization completed\n");
 
 	return 0;
 
 err_reset:
+	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
 	return err;
 err_free_tx:
+	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
 	return err;
 }
 
@@ -189,7 +193,6 @@ static const struct ethtool_ops i210_ethtool_ops = {
 };
 
 
-
 static int i210_clean(struct napi_struct *napi, int budget)
 {
 	int work_done = 0;
@@ -202,13 +205,11 @@ static int i210_clean(struct napi_struct *napi, int budget)
 }
 
 
-
 static const struct net_device_ops i210_netdev_ops = {
 	.ndo_open			= i210_open,
 	.ndo_stop			= i210_close,
 	.ndo_start_xmit		= i210_xmit,
 };
-
 
 
 static int i210_probe(struct pci_dev *pdev,
@@ -222,7 +223,6 @@ static int i210_probe(struct pci_dev *pdev,
 	u16 device_id;
 	u16 nvm_word[3];
 	u8 mac[6];
-
 
 	pr_info(DRV_NAME ": probe()\n");
 	pr_info(DRV_NAME ": PCI device %04x:%04x\n",
@@ -334,7 +334,6 @@ err_disable_device:
 }
 
 
-
 static void i210_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev;
@@ -372,7 +371,6 @@ static void i210_shutdown(struct pci_dev *pdev)
 {
 	pr_info(DRV_NAME ": shutdown()\n");
 }
-
 
 
 static int __init i210_init(void)
