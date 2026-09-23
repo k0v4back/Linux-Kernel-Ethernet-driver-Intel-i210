@@ -19,4 +19,6 @@ void i210_enable_tx(struct i210_adapter *adapter);
 
 bool i210_tx_ring_full(struct i210_tx_ring *tx_ring);
 
+void i210_clean_tx(struct i210_adapter *adapter);
+
 #endif /* _I210_HELPERS_H_ */

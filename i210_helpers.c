@@ -349,3 +349,49 @@ bool i210_tx_ring_full(struct i210_tx_ring *tx_ring)
 
 	return next == tx_ring->next_to_clean;
 }
+
+
+void i210_clean_tx(struct i210_adapter *adapter)
+{
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	struct device *dev = &adapter->pdev->dev;
+
+	while (tx_ring->next_to_clean != tx_ring->next_to_use) {
+		u16 i = tx_ring->next_to_clean;
+		struct i210_tx_desc *tx_desc = &tx_ring->desc[i];
+		struct i210_tx_buffer *tx_buffer = &tx_ring->buffer_info[i];
+		u32 status;
+
+		status = le32_to_cpu(tx_desc->olinfo_status);
+
+		if (!(status & I210_TXD_STAT_DD))
+			break;
+
+		pr_info(DRV_NAME
+			": cleaning TX desc[%u]: status=0x%08x\n",
+			i, status);
+
+		if (tx_buffer->skb) {
+			dma_unmap_single(dev,
+					 tx_buffer->dma,
+					 tx_buffer->len,
+					 DMA_TO_DEVICE);
+
+			dev_kfree_skb_any(tx_buffer->skb);
+
+			tx_buffer->skb = NULL;
+			tx_buffer->dma = 0;
+			tx_buffer->len = 0;
+		}
+
+		tx_desc->olinfo_status = 0;
+
+		tx_ring->next_to_clean++;
+
+		if (tx_ring->next_to_clean == tx_ring->count)
+			tx_ring->next_to_clean = 0;
+	}
+
+	if (netif_queue_stopped(adapter->netdev))
+		netif_wake_queue(adapter->netdev);
+}

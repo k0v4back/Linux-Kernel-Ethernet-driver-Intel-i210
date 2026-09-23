@@ -109,7 +109,7 @@ static int i210_close(struct net_device *netdev)
 	netif_stop_queue(netdev);
 
 	// i210_disable_tx(adapter);
-	// i210_clean_tx(adapter);
+	i210_clean_tx(adapter);
 	i210_free_tx_resources(adapter);
 
 	return 0;
@@ -125,6 +125,8 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
     dma_addr_t dma;
     u16 i;
     u32 cmd;
+
+	pr_info(DRV_NAME ": i210_xmit() skb_len=%u\n", skb->len);
 
 	if (i210_tx_ring_full(tx_ring)) {
 		netif_stop_queue(netdev);
@@ -155,11 +157,11 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
     tx_desc->buffer_addr = cpu_to_le64(dma);
 
     cmd = skb->len;
-    cmd |= I210_TXD_CMD_EOP;
-    cmd |= I210_TXD_CMD_IFCS;
-    cmd |= I210_TXD_CMD_RS;
-    cmd |= I210_TXD_CMD_DEXT;
-    cmd |= I210_TXD_DTYP_ADV << I210_TXD_DTYP_SHIFT;
+	cmd |= I210_TXD_DTYP_ADV << I210_TXD_DTYP_SHIFT;
+	cmd |= (I210_TXD_CMD_EOP |
+			I210_TXD_CMD_IFCS |
+			I210_TXD_CMD_RS |
+			I210_TXD_CMD_DEXT) << I210_TXD_CMD_SHIFT;
 
     tx_desc->cmd_type_len = cpu_to_le32(cmd);
     tx_desc->olinfo_status = 0;
@@ -172,6 +174,14 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
 
     tx_ring->next_to_use = i;
     writel(i, adapter->hw.hw_addr + I210_TDT(0));
+	udelay(10);
+	i210_clean_tx(adapter);
+
+	pr_info(DRV_NAME ": TX ring: TDH=%u TDT=%u\n",
+	readl(adapter->hw.hw_addr + I210_TDH(0)),
+	readl(adapter->hw.hw_addr + I210_TDT(0)));
+
+	udelay(10);
 
     return NETDEV_TX_OK;
 }

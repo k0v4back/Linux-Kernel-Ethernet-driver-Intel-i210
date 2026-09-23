@@ -167,6 +167,9 @@
 #define I210_TXD_CMD_RS    BIT(3)
 #define I210_TXD_CMD_DEXT  BIT(5)
 #define I210_TXD_DTYP_SHIFT 20
+#define I210_TXD_CMD_SHIFT 24
 #define I210_TXD_DTYP_ADV   0x3
+
+#define I210_TXD_STAT_DD    BIT(0)
 
 #endif /* _I210_DEFINES_H_ */
