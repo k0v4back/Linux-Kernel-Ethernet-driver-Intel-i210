@@ -158,23 +158,441 @@ void i210_configure_rx(struct i210_adapter *adapter)
 
 	rctl = readl(hw + I210_RCTL);
 
-	/*
-	 * Basic receive filtering
-	 *
-	 * Receive engine remains disabled until RX ring
-	 * and DMA buffers are initialized(will enable in future)
-	 */
-	rctl &= ~I210_RCTL_EN;
+    /*
+     * Enable receiver.
+     */
+    rctl |= I210_RCTL_EN;
 
-	/*
-	 * Broadcast Accept Mode(BAM)
-	 * Strip Ethernet CRC From Incoming Packet(SECRC)
-	 */
-	rctl |= I210_RCTL_BAM;
-	rctl |= I210_RCTL_SECRC;
+    /*
+     * Accept broadcast packets.
+     */
+    rctl |= I210_RCTL_BAM;
+
+    /*
+     * Strip Ethernet CRC.
+     */
+    rctl |= I210_RCTL_SECRC;
 
 	writel(rctl, hw + I210_RCTL);
 	pr_info(DRV_NAME ": RCTL = 0x%08x\n", rctl);
+}
+
+
+int i210_setup_rx_resources(struct i210_adapter *adapter)
+{
+	struct i210_rx_ring *rx_ring = &adapter->rx_ring;
+	struct pci_dev *pdev = adapter->pdev;
+	unsigned int i;
+
+	pr_info(DRV_NAME ": setting up RX resources\n");
+
+	rx_ring->count = I210_RX_DESC_COUNT;
+	rx_ring->size = rx_ring->count * sizeof(struct i210_rx_desc);
+
+	if (rx_ring->size & 0x7f) {
+		pr_err(DRV_NAME ": invalid RX ring size: %u\n", rx_ring->size);
+		return -EINVAL;
+	}
+
+	rx_ring->buffer_info = kcalloc(
+		rx_ring->count,
+		sizeof(*rx_ring->buffer_info),
+		GFP_KERNEL
+	);
+
+	if (!rx_ring->buffer_info) {
+		pr_err(DRV_NAME ": failed to allocate RX buffer info\n");
+		return -ENOMEM;
+	}
+
+	rx_ring->desc = dma_alloc_coherent(
+		&pdev->dev,
+		rx_ring->size,
+		&rx_ring->dma,
+		GFP_KERNEL
+	);
+
+	if (!rx_ring->desc) {
+		pr_err(DRV_NAME ": failed to allocate RX descriptor ring\n");
+		kfree(rx_ring->buffer_info);
+		rx_ring->buffer_info = NULL;
+		return -ENOMEM;
+	}
+
+	memset(rx_ring->desc, 0, rx_ring->size);
+
+	rx_ring->next_to_clean = 0;
+
+	BUILD_BUG_ON(sizeof(struct i210_rx_desc) != 16);
+
+	/*
+	 * Allocate and map RX buffers.
+	 */
+	for (i = 0; i < rx_ring->count; i++) {
+		struct sk_buff *skb;
+		dma_addr_t dma;
+
+		skb = netdev_alloc_skb(adapter->netdev, I210_RX_BUFFER_SIZE);
+		if (!skb) {
+			pr_err(DRV_NAME ": failed to allocate RX skb[%u]\n", i);
+			goto err_free_buffers;
+		}
+
+		dma = dma_map_single(
+			&pdev->dev,
+			skb->data,
+			I210_RX_BUFFER_SIZE,
+			DMA_FROM_DEVICE
+		);
+
+		if (dma_mapping_error(&pdev->dev, dma)) {
+			pr_err(DRV_NAME ": failed to DMA map RX skb[%u]\n", i);
+			dev_kfree_skb_any(skb);
+			goto err_free_buffers;
+		}
+
+		rx_ring->buffer_info[i].skb = skb;
+		rx_ring->buffer_info[i].dma = dma;
+
+		rx_ring->desc[i].buffer_addr = cpu_to_le64(dma);
+	}
+
+	pr_info(DRV_NAME ": RX ring allocated\n");
+	pr_info(DRV_NAME ": descriptors      = %u\n", rx_ring->count);
+	pr_info(DRV_NAME ": descriptor size  = %zu\n", sizeof(struct i210_rx_desc));
+	pr_info(DRV_NAME ": ring size        = %u bytes\n", rx_ring->size);
+	pr_info(DRV_NAME ": CPU address      = %px\n", rx_ring->desc);
+	pr_info(DRV_NAME ": DMA address      = %pad\n", &rx_ring->dma);
+
+	pr_info(DRV_NAME ": RX resources ready\n");
+
+	return 0;
+
+err_free_buffers:
+	while (i--) {
+		struct i210_rx_buffer *rx_buffer;
+
+		rx_buffer = &rx_ring->buffer_info[i];
+
+		if (rx_buffer->skb) {
+			dma_unmap_single(
+				&pdev->dev,
+				rx_buffer->dma,
+				I210_RX_BUFFER_SIZE,
+				DMA_FROM_DEVICE
+			);
+
+			dev_kfree_skb_any(rx_buffer->skb);
+
+			rx_buffer->skb = NULL;
+			rx_buffer->dma = 0;
+		}
+	}
+
+	dma_free_coherent(
+		&pdev->dev,
+		rx_ring->size,
+		rx_ring->desc,
+		rx_ring->dma
+	);
+
+	rx_ring->desc = NULL;
+	rx_ring->dma = 0;
+
+	kfree(rx_ring->buffer_info);
+	rx_ring->buffer_info = NULL;
+
+	return -ENOMEM;
+}
+
+
+int i210_configure_rx_ring(struct i210_adapter *adapter)
+{
+	struct i210_rx_ring *rx_ring = &adapter->rx_ring;
+	void __iomem *hw = adapter->hw.hw_addr;
+	u32 rxdctl;
+	int timeout = 1000;
+
+	pr_info(DRV_NAME ": configuring RX ring\n");
+
+	writel(lower_32_bits(rx_ring->dma), hw + I210_RDBAL(0));
+	writel(upper_32_bits(rx_ring->dma), hw + I210_RDBAH(0));
+	writel(rx_ring->size, hw + I210_RDLEN(0));
+
+	writel(0, hw + I210_SRRCTL(0));
+
+	/*
+	 * Hardware starts from descriptor 0.
+	 */
+	writel(0, hw + I210_RDH(0));
+
+	/*
+	 * Give all descriptors to hardware.
+	 */
+	// writel(rx_ring->count - 1, hw + I210_RDT(0));
+	writel(0, hw + I210_RDT(0));
+	pr_info(DRV_NAME ": RX ring before enable: RDH=%u RDT=%u\n",
+		readl(hw + I210_RDH(0)), readl(hw + I210_RDT(0))
+	);
+
+	rxdctl = readl(hw + I210_RXDCTL(0));
+	pr_info(DRV_NAME ": RXDCTL before enable = 0x%08x\n", rxdctl);
+
+	/*
+	 * RXDCTL.ENABLE
+	 */
+	rxdctl |= I210_RXDCTL_ENABLE;
+	writel(rxdctl, hw + I210_RXDCTL(0));
+
+	/*
+	 * Wait until hardware reports queue enabled.
+	 */
+	do {
+		rxdctl = readl(hw + I210_RXDCTL(0));
+		if (rxdctl & I210_RXDCTL_ENABLE)
+			break;
+		udelay(1);
+	} while (--timeout);
+
+	if (!(rxdctl & I210_RXDCTL_ENABLE)) {
+		pr_err(DRV_NAME ": RX queue failed to enable\n");
+		return -ETIMEDOUT;
+	}
+
+	pr_info(DRV_NAME ": RXDCTL after enable = 0x%08x\n", rxdctl);
+
+	dma_wmb();
+
+	/*
+	 * NOW give descriptors to hardware.
+	 */
+	writel(rx_ring->count - 1, hw + I210_RDT(0));
+
+	pr_info(
+		DRV_NAME
+		": RX ring regs: "
+		"RDBAL=0x%08x "
+		"RDBAH=0x%08x "
+		"RDLEN=0x%08x "
+		"RDH=%u "
+		"RDT=%u "
+		"RXDCTL=0x%08x\n",
+		readl(hw + I210_RDBAL(0)),
+		readl(hw + I210_RDBAH(0)),
+		readl(hw + I210_RDLEN(0)),
+		readl(hw + I210_RDH(0)),
+		readl(hw + I210_RDT(0)),
+		readl(hw + I210_RXDCTL(0))
+	);
+
+	return 0;
+}
+
+
+void i210_free_rx_resources(struct i210_adapter *adapter)
+{
+	struct i210_rx_ring *rx_ring = &adapter->rx_ring;
+	struct pci_dev *pdev = adapter->pdev;
+	unsigned int i;
+
+	pr_info(DRV_NAME ": freeing RX resources\n");
+
+	if (rx_ring->buffer_info) {
+		for (i = 0; i < rx_ring->count; i++) {
+			struct i210_rx_buffer *rx_buffer = &rx_ring->buffer_info[i];
+
+			if (!rx_buffer->skb)
+				continue;
+
+			dma_unmap_single(
+				&pdev->dev,
+				rx_buffer->dma,
+				I210_RX_BUFFER_SIZE,
+				DMA_FROM_DEVICE
+			);
+
+			dev_kfree_skb_any(rx_buffer->skb);
+
+			rx_buffer->skb = NULL;
+			rx_buffer->dma = 0;
+		}
+	}
+
+	if (rx_ring->desc) {
+		dma_free_coherent(
+			&pdev->dev,
+			rx_ring->size,
+			rx_ring->desc,
+			rx_ring->dma
+		);
+
+		rx_ring->desc = NULL;
+		rx_ring->dma = 0;
+	}
+
+	kfree(rx_ring->buffer_info);
+	rx_ring->buffer_info = NULL;
+
+	rx_ring->count = 0;
+	rx_ring->size = 0;
+	rx_ring->next_to_clean = 0;
+}
+
+
+int i210_clean_rx(struct i210_adapter *adapter, int budget)
+{
+	struct i210_rx_ring *rx_ring = &adapter->rx_ring;
+	struct pci_dev *pdev = adapter->pdev;
+	void __iomem *hw = adapter->hw.hw_addr;
+	int work_done = 0;
+	u32 status_reg;
+
+	status_reg = readl(hw + I210_STATUS);
+
+	pr_info(DRV_NAME ": RX state: STATUS=0x%08x RDH=%u RDT=%u RXDCTL=0x%08x RCTL=0x%08x\n",
+		status_reg,
+		readl(hw + I210_RDH(0)),
+		readl(hw + I210_RDT(0)),
+		readl(hw + I210_RXDCTL(0)),
+		readl(hw + I210_RCTL));
+
+	while (work_done < budget) {
+		u16 i;
+		u16 length;
+		u8 status;
+
+		struct i210_rx_desc *rx_desc;
+		struct i210_rx_buffer *rx_buffer;
+		struct sk_buff *skb;
+
+		i = rx_ring->next_to_clean;
+		rx_desc = &rx_ring->desc[i];
+		rx_buffer = &rx_ring->buffer_info[i];
+
+		status = READ_ONCE(rx_desc->status);
+		if (!(status & I210_RXD_STAT_DD))
+			break;
+
+		dma_rmb();
+
+		length = le16_to_cpu(READ_ONCE(rx_desc->length));
+		pr_info(
+			DRV_NAME
+			": RX desc[%u]: "
+			"status=0x%02x "
+			"length=%u "
+			"errors=0x%02x\n",
+			i,
+			status,
+			length,
+			rx_desc->errors
+		);
+
+		skb = rx_buffer->skb;
+		if (!skb) {
+			pr_err(DRV_NAME
+			       ": RX desc[%u] has no skb\n",
+			       i);
+			break;
+		}
+
+		dma_unmap_single(
+			&pdev->dev,
+			rx_buffer->dma,
+			I210_RX_BUFFER_SIZE,
+			DMA_FROM_DEVICE
+		);
+
+		rx_buffer->dma = 0;
+		rx_buffer->skb = NULL;
+
+		/*
+		 * For the first version we expect
+		 * one descriptor per packet.
+		 */
+		if (!(status & I210_RXD_STAT_EOP)) {
+			pr_err(
+				DRV_NAME
+				": RX desc[%u]: "
+				"packet is not EOP\n",
+				i
+			);
+
+			dev_kfree_skb_any(skb);
+			goto refill;
+		}
+
+		skb_put(skb, length);
+
+		skb->protocol = eth_type_trans(skb, adapter->netdev);
+		pr_info(
+			DRV_NAME
+			": RX packet received: "
+			"len=%u protocol=0x%04x\n",
+			skb->len,
+			ntohs(skb->protocol)
+		);
+
+		netif_receive_skb(skb);
+
+refill:
+		if (i210_alloc_rx_buffer(adapter, i)) {
+			pr_err(
+				DRV_NAME
+				": failed to refill RX desc[%u]\n",
+				i
+			);
+			break;
+		}
+
+		/*
+		 * Return descriptor to hardware.
+		 */
+		writel(i, hw + I210_RDT(0));
+
+		rx_ring->next_to_clean++;
+		if (rx_ring->next_to_clean == rx_ring->count)
+			rx_ring->next_to_clean = 0;
+
+		work_done++;
+	}
+
+	return work_done;
+}
+
+
+int i210_alloc_rx_buffer(struct i210_adapter *adapter, u16 i)
+{
+	struct i210_rx_ring *rx_ring = &adapter->rx_ring;
+	struct i210_rx_buffer *rx_buffer;
+	struct sk_buff *skb;
+	dma_addr_t dma;
+
+	rx_buffer = &rx_ring->buffer_info[i];
+
+	skb = netdev_alloc_skb(adapter->netdev, I210_RX_BUFFER_SIZE);
+	if (!skb)
+		return -ENOMEM;
+
+	dma = dma_map_single(
+		&adapter->pdev->dev,
+		skb->data,
+		I210_RX_BUFFER_SIZE,
+		DMA_FROM_DEVICE
+	);
+
+	if (dma_mapping_error(&adapter->pdev->dev, dma)) {
+		dev_kfree_skb_any(skb);
+		return -ENOMEM;
+	}
+
+	rx_buffer->skb = skb;
+	rx_buffer->dma = dma;
+
+	rx_ring->desc[i].buffer_addr = cpu_to_le64(dma);
+	rx_ring->desc[i].status = 0;
+
+	return 0;
 }
 
 

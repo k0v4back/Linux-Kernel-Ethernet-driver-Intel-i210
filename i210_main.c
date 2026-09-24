@@ -69,6 +69,15 @@ static int i210_open(struct net_device *netdev)
 	}
 
 	/*
+	 * Setup RX resources
+	 */
+	err = i210_setup_rx_resources(adapter);
+	if (err) {
+		pr_err(DRV_NAME ": RX resource setup failed\n");
+		goto err_free_tx;
+	}
+
+	/*
 	 * Configure TX ring
 	 */
 	err = i210_configure_tx_ring(adapter);
@@ -76,13 +85,24 @@ static int i210_open(struct net_device *netdev)
 		goto err_free_tx;
 
 	/*
+	 * Configure RX ring
+	 */
+	err = i210_configure_rx_ring(adapter);
+	if (err)
+		goto err_free_rx;
+
+	/*
 	 * Configure TX
 	 */
 	i210_configure_tx(adapter);
+
+	/*
+	 * Enable TX
+	 */
 	i210_enable_tx(adapter);
 
 	/*
-	 * Setup RX
+	 * Configure RX
 	 */
 	i210_configure_rx(adapter);
 
@@ -94,9 +114,15 @@ static int i210_open(struct net_device *netdev)
 
 err_reset:
 	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
-	return err;
+
 err_free_tx:
 	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
+	i210_free_tx_resources(adapter);
+
+err_free_rx:
+	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
+	i210_free_rx_resources(adapter);
+
 	return err;
 }
 
@@ -106,10 +132,13 @@ static int i210_close(struct net_device *netdev)
 
 	pr_info(DRV_NAME ": i210_close()\n");
 
+	/* Stop accepting new packets from the network stack. */
 	netif_stop_queue(netdev);
 
-	// i210_disable_tx(adapter);
-	i210_clean_tx(adapter);
+	/*
+	 * Now it is safe to release the rings and RX buffers.
+	 */
+	i210_free_rx_resources(adapter);
 	i210_free_tx_resources(adapter);
 
 	return 0;
@@ -176,6 +205,7 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
     writel(i, adapter->hw.hw_addr + I210_TDT(0));
 	udelay(10);
 	i210_clean_tx(adapter);
+	i210_clean_rx(adapter, 64);
 
 	pr_info(DRV_NAME ": TX ring: TDH=%u TDT=%u\n",
 	readl(adapter->hw.hw_addr + I210_TDH(0)),
@@ -194,7 +224,7 @@ static void i210_get_drvinfo(struct net_device *netdev,
 	strlcpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
 	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev), sizeof(drvinfo->bus_info));
 
-	pr_info(DRV_NAME ": i210_get_drvinfo()\n");
+	// pr_info(DRV_NAME ": i210_get_drvinfo()\n");
 }
 
 static const struct ethtool_ops i210_ethtool_ops = {

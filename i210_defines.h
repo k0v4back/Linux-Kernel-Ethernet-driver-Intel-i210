@@ -10,6 +10,9 @@
 
 #define I210_TX_DESC_COUNT    64
 
+#define I210_RX_DESC_COUNT 64
+#define I210_RX_BUFFER_SIZE 2048
+
 
 #define DRV_NAME "i210"
 
@@ -171,5 +174,22 @@
 #define I210_TXD_DTYP_ADV   0x3
 
 #define I210_TXD_STAT_DD    BIT(0)
+
+/* RX descriptor ring - queue 0 */
+#define I210_RDBAL(q)   (0x0C000 + ((q) * 0x100))
+#define I210_RDBAH(q)   (0x0C004 + ((q) * 0x100))
+#define I210_RDLEN(q)   (0x0C008 + ((q) * 0x100))
+#define I210_SRRCTL(q)  (0x0C00C + ((q) * 0x100))
+#define I210_RDH(q)     (0x0C010 + ((q) * 0x100))
+#define I210_RDT(q)     (0x0C018 + ((q) * 0x100))
+#define I210_RXDCTL(q)  (0x0C028 + ((q) * 0x100))
+#define I210_RXDCTL_ENABLE BIT(25)
+#define I210_RXD_CMD_EOP   BIT(0)
+#define I210_RXD_CMD_IFCS  BIT(1)
+#define I210_RXD_CMD_RS    BIT(3)
+#define I210_RXD_CMD_DEXT  BIT(5)
+
+#define I210_RXD_STAT_DD BIT(0)
+#define I210_RXD_STAT_EOP BIT(1)
 
 #endif /* _I210_DEFINES_H_ */
