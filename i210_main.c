@@ -51,21 +51,36 @@ static int i210_open(struct net_device *netdev)
 
 	pr_info(DRV_NAME ": i210_open()\n");
 
+	/*
+	 * Hardware reset
+	 */
 	err = i210_reset_hw(adapter);
 	if (err) {
 		pr_err(DRV_NAME ": hardware reset failed: %d\n", err);
 		return err;
 	}
 
+	/*
+	 * Restore/program MAC address
+	 */
 	i210_set_mac_address(adapter, netdev->dev_addr);
+
+	/*
+	 * Initialize internal PHY and start auto-negotiation
+	 */
+	err = i210_init_phy(adapter);
+	if (err) {
+		pr_err(DRV_NAME ": PHY init failed: %d\n", err);
+		return err;
+	}
 
 	/*
 	 * Setup TX resources
 	 */
 	err = i210_setup_tx_resources(adapter);
 	if (err) {
-		pr_err(DRV_NAME ": TX resource setup failed\n");
-		goto err_reset;
+		pr_err(DRV_NAME ": TX resource setup failed: %d\n", err);
+		return err;
 	}
 
 	/*
@@ -73,7 +88,7 @@ static int i210_open(struct net_device *netdev)
 	 */
 	err = i210_setup_rx_resources(adapter);
 	if (err) {
-		pr_err(DRV_NAME ": RX resource setup failed\n");
+		pr_err(DRV_NAME ": RX resource setup failed: %d\n", err);
 		goto err_free_tx;
 	}
 
@@ -81,18 +96,22 @@ static int i210_open(struct net_device *netdev)
 	 * Configure TX ring
 	 */
 	err = i210_configure_tx_ring(adapter);
-	if (err)
-		goto err_free_tx;
+	if (err) {
+		pr_err(DRV_NAME ": TX ring configuration failed: %d\n", err);
+		goto err_free_rx;
+	}
 
 	/*
 	 * Configure RX ring
 	 */
 	err = i210_configure_rx_ring(adapter);
-	if (err)
+	if (err) {
+		pr_err(DRV_NAME ": RX ring configuration failed: %d\n", err);
 		goto err_free_rx;
+	}
 
 	/*
-	 * Configure TX
+	 * Configure MAC TX
 	 */
 	i210_configure_tx(adapter);
 
@@ -102,26 +121,45 @@ static int i210_open(struct net_device *netdev)
 	i210_enable_tx(adapter);
 
 	/*
-	 * Configure RX
+	 * Configure MAC RX
 	 */
 	i210_configure_rx(adapter);
 
+	/*
+	 * Wait for PHY link
+	 *
+	 * This is temporary for the learning/debugging stage
+	 * Later link handling will become asynchronous
+	 */
+	err = i210_phy_wait_link(adapter, 5000);
+	if (err) {
+		if (err == -ENOLINK) {
+			pr_info(DRV_NAME
+				": no PHY link\n");
+		} else {
+			pr_err(DRV_NAME
+			       ": PHY link check failed: %d\n",
+			       err);
+		}
+
+		goto err_free_rx;
+	}
+
+	/*
+	 * PHY link is up
+	 * Allow the network stack to transmit
+	 */
 	netif_start_queue(netdev);
 
 	pr_info(DRV_NAME ": hardware initialization completed\n");
 
 	return 0;
 
-err_reset:
-	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
+err_free_rx:
+	i210_free_rx_resources(adapter);
 
 err_free_tx:
-	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
 	i210_free_tx_resources(adapter);
-
-err_free_rx:
-	pr_info(DRV_NAME ": i210_open: err_reset(err=%d)\n", err);
-	i210_free_rx_resources(adapter);
 
 	return err;
 }

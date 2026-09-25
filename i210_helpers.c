@@ -59,18 +59,16 @@ int i210_reset_hw(struct i210_adapter *adapter)
 	ctrl |= I210_CTRL_RST;
 	writel(ctrl, hw + I210_CTRL);
 
+	/*
+	 * Datasheet:
+	 * wait at least 3 ms after CTRL.RST.
+	 */
 	msleep(3);
 
-	/*
-	 * Verify that software reset has completed.
-	 */
+	ctrl = readl(hw + I210_CTRL);
 	status = readl(hw + I210_STATUS);
+	pr_info(DRV_NAME ": CTRL after reset = 0x%08x\n", ctrl);
 	pr_info(DRV_NAME ": STATUS after reset = 0x%08x\n", status);
-
-	if (!(status & I210_STATUS_PF_RST_DONE)) {
-		pr_err(DRV_NAME ": reset did not complete\n");
-		return -ETIMEDOUT;
-	}
 
 	/*
 	 * Verify NVM auto-read completed.
@@ -812,4 +810,304 @@ void i210_clean_tx(struct i210_adapter *adapter)
 
 	if (netif_queue_stopped(adapter->netdev))
 		netif_wake_queue(adapter->netdev);
+}
+
+
+int i210_read_phy_reg(struct i210_adapter *adapter, u8 reg, u16 *value)
+{
+	void __iomem *hw = adapter->hw.hw_addr;
+	u32 mdic;
+	int timeout = 1000;
+
+	/*
+	 * Make sure previous MDI transaction is finished
+	 * and clear any previous error
+	 */
+	mdic = readl(hw + I210_MDIC);
+	if (mdic & I210_MDIC_ERROR) {
+		pr_warn(DRV_NAME ": MDIC error before read: 0x%08x\n", mdic);
+	}
+
+	/*
+	 * PHY register read.
+	 */
+	mdic = I210_MDIC_OP_READ | ((u32)reg << I210_MDIC_REG_SHIFT);
+	writel(mdic, hw + I210_MDIC);
+
+	/*
+	 * Wait until PHY transaction completes
+	 */
+	do {
+		mdic = readl(hw + I210_MDIC);
+		if (mdic & I210_MDIC_READY)
+			break;
+		udelay(1);
+	} while (--timeout);
+
+	if (!(mdic & I210_MDIC_READY)) {
+		pr_err(DRV_NAME ": MDIC read timeout, reg=%u\n", reg);
+		return -ETIMEDOUT;
+	}
+
+	if (mdic & I210_MDIC_ERROR) {
+		pr_err(DRV_NAME ": MDIC read error, reg=%u MDIC=0x%08x\n", reg, mdic);
+		return -EIO;
+	}
+
+	*value = mdic & I210_MDIC_DATA_MASK;
+
+	return 0;
+}
+
+
+int i210_write_phy_reg(struct i210_adapter *adapter,
+                       u16 reg,
+                       u16 value)
+{
+	void __iomem *hw = adapter->hw.hw_addr;
+	u32 mdic;
+	int timeout = 1000;
+
+	/*
+	 * MDIC:
+	 *
+	 * bits 15:0  = data
+	 * bits 20:16 = PHY register address
+	 * bits 27:26 = operation
+	 * bit 28     = ready
+	 * bit 30     = error
+	 */
+	mdic = value;
+	mdic |= ((u32)reg << 16);
+
+	/*
+	 * OP = 01b -> PHY write
+	 */
+	mdic |= (1U << 26);
+	writel(mdic, hw + I210_MDIC);
+
+	do {
+		mdic = readl(hw + I210_MDIC);
+		if (mdic & I210_MDIC_READY)
+			break;
+		udelay(1);
+	} while (--timeout);
+
+	if (!(mdic & I210_MDIC_READY)) {
+		pr_err(DRV_NAME ": PHY write timeout, reg=%u value=0x%04x\n", reg, value);
+		return -ETIMEDOUT;
+	}
+
+	if (mdic & I210_MDIC_ERROR) {
+		pr_err(DRV_NAME
+		       ": PHY write error, reg=%u value=0x%04x MDIC=0x%08x\n",
+		       reg, value, mdic);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+
+int i210_dump_phy(struct i210_adapter *adapter)
+{
+	u16 ctrl;
+	u16 status;
+	u16 id1;
+	u16 id2;
+	u16 an_adv;
+	u16 an_lp;
+	u16 gb_ctrl;
+	int err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_CTRL, &ctrl);
+	if (err)
+		return err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_STATUS, &status);
+	if (err)
+		return err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_ID1, &id1);
+	if (err)
+		return err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_ID2, &id2);
+	if (err)
+		return err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_AN_ADV, &an_adv);
+	if (err)
+		return err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_AN_LP_ABILITY, &an_lp);
+	if (err)
+		return err;
+
+	err = i210_read_phy_reg(adapter, I210_PHY_1000_CTRL, &gb_ctrl);
+	if (err)
+		return err;
+
+	pr_info(DRV_NAME
+		": PHY dump:\n"
+		"  CTRL      = 0x%04x\n"
+		"  STATUS    = 0x%04x\n"
+		"  ID1       = 0x%04x\n"
+		"  ID2       = 0x%04x\n"
+		"  AN_ADV    = 0x%04x\n"
+		"  AN_LP     = 0x%04x\n"
+		"  1000_CTRL = 0x%04x\n",
+		ctrl,
+		status,
+		id1,
+		id2,
+		an_adv,
+		an_lp,
+		gb_ctrl);
+
+	pr_info(DRV_NAME
+		": PHY state: "
+		"LINK=%u "
+		"AN_ABILITY=%u "
+		"AN_COMPLETE=%u\n",
+		!!(status & I210_PHY_STATUS_LINK_STATUS),
+		!!(status & I210_PHY_STATUS_AN_ABILITY),
+		!!(status & I210_PHY_STATUS_AN_COMPLETE));
+
+	return 0;
+}
+
+
+int i210_get_phy_link(struct i210_adapter *adapter, bool *link)
+{
+	u16 status1;
+	u16 status2;
+	int err;
+
+	err = i210_read_phy_reg(adapter,
+		I210_PHY_STATUS,
+		&status1
+	);
+	if (err)
+		return err;
+
+	/*
+	 * BMSR link status is commonly latch-low,
+	 * so perform a second read.
+	 */
+	err = i210_read_phy_reg(adapter,
+		I210_PHY_STATUS,
+		&status2
+	);
+	if (err)
+		return err;
+
+	*link = !!(status2 & I210_PHY_STATUS_LINK_STATUS);
+	pr_info(DRV_NAME
+		": PHY link: "
+		"STATUS1=0x%04x "
+		"STATUS2=0x%04x "
+		"LINK=%u\n",
+		status1,
+		status2,
+		*link);
+
+	return 0;
+}
+
+
+int i210_phy_start_autoneg(struct i210_adapter *adapter)
+{
+	u16 ctrl;
+	int err;
+
+	err = i210_read_phy_reg(adapter,
+		I210_PHY_CTRL,
+		&ctrl);
+	if (err)
+		return err;
+
+	pr_info(DRV_NAME
+		": PHY CTRL before autoneg = 0x%04x\n",
+		ctrl);
+
+	/*
+	 * Enable Auto-Negotiation.
+	 */
+	ctrl |= I210_PHY_CTRL_AN_ENABLE;
+
+	/*
+	 * Restart Auto-Negotiation.
+	 */
+	ctrl |= I210_PHY_CTRL_RESTART_AN;
+
+	err = i210_write_phy_reg(adapter,
+		I210_PHY_CTRL,
+		ctrl);
+	if (err)
+		return err;
+
+	pr_info(DRV_NAME ": PHY CTRL after autoneg = 0x%04x\n", ctrl);
+
+	return 0;
+}
+
+
+int i210_phy_wait_link(struct i210_adapter *adapter, unsigned int timeout_ms)
+{
+	unsigned int elapsed = 0;
+	bool link;
+	int err;
+
+	while (elapsed < timeout_ms) {
+		err = i210_get_phy_link(adapter, &link);
+		if (err)
+			return err;
+
+		if (link) {
+			pr_info(DRV_NAME ": PHY link is UP after %u ms\n", elapsed);
+			return 0;
+		}
+
+		msleep(100);
+		elapsed += 100;
+	}
+
+	pr_info(DRV_NAME ": PHY link is DOWN after %u ms\n", timeout_ms);
+
+	return -ENOLINK;
+}
+
+
+int i210_init_phy(struct i210_adapter *adapter)
+{
+	u32 ctrl;
+	int err;
+
+	pr_info(DRV_NAME ": initializing PHY\n");
+
+	/*
+	 * CTRL.SLU must be set for the MAC to recognize
+	 * the PHY link indication.
+	 */
+	ctrl = readl(adapter->hw.hw_addr + I210_CTRL);
+	ctrl |= I210_CTRL_SLU;
+	writel(ctrl, adapter->hw.hw_addr + I210_CTRL);
+	pr_info(DRV_NAME ": MAC CTRL after SLU = 0x%08x\n", ctrl);
+
+	/*
+	 * First inspect the PHY state.
+	 */
+	err = i210_dump_phy(adapter);
+	if (err)
+		return err;
+
+	/*
+	 * Start PHY auto-negotiation.
+	 */
+	err = i210_phy_start_autoneg(adapter);
+	if (err)
+		return err;
+
+	return 0;
 }

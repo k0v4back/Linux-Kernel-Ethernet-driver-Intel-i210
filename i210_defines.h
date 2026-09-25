@@ -127,6 +127,8 @@
 
 /* Device Control Register */
 #define I210_CTRL              0x00000
+#define I210_CTRL_FD           BIT(0)
+#define I210_CTRL_SLU          BIT(6)
 #define I210_CTRL_RST          BIT(26)
 
 /* Device Status Register */
@@ -191,5 +193,70 @@
 
 #define I210_RXD_STAT_DD BIT(0)
 #define I210_RXD_STAT_EOP BIT(1)
+
+/* MDIC registers */
+#define I210_MDIC              0x00020
+#define I210_MDIC_DATA_MASK   0x0000ffff
+#define I210_MDIC_REG_SHIFT   16
+#define I210_MDIC_OP_SHIFT    26
+#define I210_MDIC_OP_READ     (2U << I210_MDIC_OP_SHIFT)
+#define I210_MDIC_READY       BIT(28)
+#define I210_MDIC_ERROR       BIT(30)
+
+/*
+ * PHY registers
+ *
+ * I210 internal PHY is accessed through MDIC.
+ */
+#define I210_PHY_CTRL             0
+#define I210_PHY_STATUS           1
+#define I210_PHY_ID1              2
+#define I210_PHY_ID2              3
+#define I210_PHY_AN_ADV           4
+#define I210_PHY_AN_LP_ABILITY    5
+#define I210_PHY_AN_EXP           6
+#define I210_PHY_1000_CTRL         9
+#define I210_PHY_1000_STATUS      10
+
+/*
+ * PHY Copper Control Register (reg 0)
+ */
+#define I210_PHY_CTRL_RESET       BIT(15)
+#define I210_PHY_CTRL_LOOPBACK    BIT(14)
+#define I210_PHY_CTRL_SPEED_LSB   BIT(13)
+#define I210_PHY_CTRL_AN_ENABLE   BIT(12)
+#define I210_PHY_CTRL_POWER_DOWN  BIT(11)
+#define I210_PHY_CTRL_RESTART_AN  BIT(9)
+#define I210_PHY_CTRL_DUPLEX      BIT(8)
+#define I210_PHY_CTRL_SPEED_MSB   BIT(6)
+
+/*
+ * PHY Copper Status Register (reg 1)
+ */
+#define I210_PHY_STATUS_100BASE_T4    BIT(15)
+#define I210_PHY_STATUS_100BASE_XFD   BIT(14)
+#define I210_PHY_STATUS_100BASE_XHD   BIT(13)
+#define I210_PHY_STATUS_10FD           BIT(12)
+#define I210_PHY_STATUS_10HD           BIT(11)
+#define I210_PHY_STATUS_100BASE_T2FD  BIT(10)
+#define I210_PHY_STATUS_100BASE_T2HD  BIT(9)
+#define I210_PHY_STATUS_EXT_STATUS     BIT(8)
+#define I210_PHY_STATUS_MF_PREAMBLE    BIT(6)
+#define I210_PHY_STATUS_AN_COMPLETE    BIT(5)
+#define I210_PHY_STATUS_REMOTE_FAULT   BIT(4)
+#define I210_PHY_STATUS_AN_ABILITY     BIT(3)
+#define I210_PHY_STATUS_LINK_STATUS    BIT(2)
+#define I210_PHY_STATUS_JABBER         BIT(1)
+#define I210_PHY_STATUS_EXT_CAP        BIT(0)
+
+/*
+ * 1000BASE-T Control Register (reg 9)
+ */
+#define I210_PHY_1000_CTRL_MS_MANUAL   BIT(12)
+#define I210_PHY_1000_CTRL_MS_VALUE    BIT(11)
+#define I210_PHY_1000_CTRL_TEST_SHIFT  13
+#define I210_PHY_1000_CTRL_TEST_MASK   GENMASK(15, 13)
+#define I210_PHY_1000_CTRL_1000FD      BIT(9)
+#define I210_PHY_1000_CTRL_1000HD      BIT(8)
 
 #endif /* _I210_DEFINES_H_ */
