@@ -8,6 +8,8 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
+#include <linux/ip.h>
+#include <linux/if_arp.h>
 
 struct i210_hw {
 	void __iomem *hw_addr;

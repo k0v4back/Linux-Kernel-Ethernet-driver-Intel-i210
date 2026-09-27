@@ -137,6 +137,7 @@ void i210_configure_tx(struct i210_adapter *adapter)
 	 */
 	tctl |= I210_TCTL_PSP;
 	tctl |= I210_TCTL_RTLC;
+	tctl |= I210_TCTL_CT;
 
 	/*
 	 * Do NOT enable TX yet.
@@ -444,6 +445,8 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 	void __iomem *hw = adapter->hw.hw_addr;
 	int work_done = 0;
 	u32 status_reg;
+	struct ethhdr *eth;
+	struct iphdr *iph;
 
 	status_reg = readl(hw + I210_STATUS);
 
@@ -522,14 +525,50 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 
 		skb_put(skb, length);
 
+		if (skb->len >= ETH_HLEN) {
+			struct ethhdr *eth = (struct ethhdr *)skb->data;
+
+			pr_info(DRV_NAME
+				": RX ETH src=%pM dst=%pM proto=0x%04x len=%u\n",
+				eth->h_source,
+				eth->h_dest,
+				ntohs(eth->h_proto),
+				skb->len);
+
+			if (eth->h_proto == htons(ETH_P_ARP)) {
+				struct arphdr *arp;
+
+				if (skb->len >= ETH_HLEN + sizeof(struct arphdr)) {
+					arp = (struct arphdr *)(skb->data + ETH_HLEN);
+
+					pr_info(DRV_NAME
+						": RX ARP htype=%u ptype=0x%04x hlen=%u plen=%u op=%u\n",
+						ntohs(arp->ar_hrd),
+						ntohs(arp->ar_pro),
+						arp->ar_hln,
+						arp->ar_pln,
+						ntohs(arp->ar_op));
+				}
+			}
+
+			if (eth->h_proto == htons(ETH_P_IP) &&
+				skb->len >= ETH_HLEN + sizeof(struct iphdr)) {
+
+				struct iphdr *iph =
+					(struct iphdr *)(skb->data + ETH_HLEN);
+
+				pr_info(DRV_NAME
+					": RX IPv4 src=%pI4 dst=%pI4 proto=%u ttl=%u len=%u id=0x%04x\n",
+					&iph->saddr,
+					&iph->daddr,
+					iph->protocol,
+					iph->ttl,
+					ntohs(iph->tot_len),
+					ntohs(iph->id));
+			}
+		}
+
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
-		pr_info(
-			DRV_NAME
-			": RX packet received: "
-			"len=%u protocol=0x%04x\n",
-			skb->len,
-			ntohs(skb->protocol)
-		);
 
 		netif_receive_skb(skb);
 
@@ -712,35 +751,53 @@ void i210_free_tx_resources(struct i210_adapter *adapter)
 
 int i210_configure_tx_ring(struct i210_adapter *adapter)
 {
-	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
-	void __iomem *hw = adapter->hw.hw_addr;
-	u32 txdctl;
+    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+    void __iomem *hw = adapter->hw.hw_addr;
+    u32 txdctl;
+    int timeout = 1000;
 
-	pr_info(DRV_NAME ": configuring TX ring\n");
+    pr_info(DRV_NAME ": configuring TX ring\n");
 
-	writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
-	writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
-	writel(tx_ring->size, hw + I210_TDLEN(0));
+    /*
+     * Queue must be disabled while configuring base/length.
+     */
+    writel(0, hw + I210_TXDCTL(0));
+    writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
+    writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
+    writel(tx_ring->size, hw + I210_TDLEN(0));
 
-	writel(0, hw + I210_TDH(0));
-	writel(0, hw + I210_TDT(0));
+    writel(0, hw + I210_TDH(0));
+    writel(0, hw + I210_TDT(0));
 
-	txdctl = readl(hw + I210_TXDCTL(0));
-	pr_info(DRV_NAME ": TXDCTL before enable = 0x%08x\n", txdctl);
+    /*
+     * Intel recommended write-back policy:
+     *
+     * WTHRESH = 1
+     * PTHRESH = 0
+     * HTHRESH = 0
+     */
+    txdctl = I210_TXDCTL_WTHRESH;
 
-	txdctl |= I210_TXDCTL_ENABLE;
-	writel(txdctl, hw + I210_TXDCTL(0));
+    /*
+     * Enable queue.
+     */
+    txdctl |= I210_TXDCTL_ENABLE;
+    writel(txdctl, hw + I210_TXDCTL(0));
+    do {
+        txdctl = readl(hw + I210_TXDCTL(0));
+        if (txdctl & I210_TXDCTL_ENABLE)
+            break;
+        udelay(1);
+    } while (--timeout);
 
-	txdctl = readl(hw + I210_TXDCTL(0));
-	pr_info(DRV_NAME ": TXDCTL after enable = 0x%08x\n", txdctl);
+    if (!(txdctl & I210_TXDCTL_ENABLE)) {
+        pr_err(DRV_NAME ": TX queue failed to enable\n");
+        return -ETIMEDOUT;
+    }
 
-	/* Check realy enable or not */
-	if (!(txdctl & I210_TXDCTL_ENABLE)) {
-		pr_err(DRV_NAME ": TX queue failed to enable\n");
-		return -ETIMEDOUT;
-	}
+    pr_info(DRV_NAME ": TXDCTL = 0x%08x\n", txdctl);
 
-	return 0;
+    return 0;
 }
 
 
@@ -911,72 +968,201 @@ int i210_write_phy_reg(struct i210_adapter *adapter,
 
 int i210_dump_phy(struct i210_adapter *adapter)
 {
-	u16 ctrl;
-	u16 status;
-	u16 id1;
-	u16 id2;
-	u16 an_adv;
-	u16 an_lp;
-	u16 gb_ctrl;
+	static const char * const phy_reg_names[32] = {
+		[0]  = "BMCR",
+		[1]  = "BMSR",
+		[2]  = "PHYID1",
+		[3]  = "PHYID2",
+		[4]  = "ANAR",
+		[5]  = "ANLPAR",
+		[6]  = "ANER",
+		[7]  = "ANNPTR",
+		[8]  = "ANLPNP",
+		[9]  = "1000BASE-T CTRL",
+		[10] = "1000BASE-T STATUS",
+		[11] = "EXT STATUS",
+		[12] = "PHY CTRL",
+		[13] = "PHY STATUS",
+		[14] = "PHY INT",
+		[15] = "PHY INT MASK",
+		[16] = "PHY REG16",
+		[17] = "PHY REG17",
+		[18] = "PHY REG18",
+		[19] = "PHY REG19",
+		[20] = "PHY REG20",
+		[21] = "PHY REG21",
+		[22] = "PHY REG22",
+		[23] = "PHY REG23",
+		[24] = "PHY REG24",
+		[25] = "PHY REG25",
+		[26] = "PHY REG26",
+		[27] = "PHY REG27",
+		[28] = "PHY REG28",
+		[29] = "PHY REG29",
+		[30] = "PHY REG30",
+		[31] = "PHY REG31",
+	};
+
+	int i;
 	int err;
+	u16 value;
 
-	err = i210_read_phy_reg(adapter, I210_PHY_CTRL, &ctrl);
-	if (err)
-		return err;
+	pr_info(DRV_NAME ": ================= PHY DUMP =================\n");
 
-	err = i210_read_phy_reg(adapter, I210_PHY_STATUS, &status);
-	if (err)
-		return err;
+	for (i = 0; i < 32; i++) {
+		err = i210_read_phy_reg(adapter, i, &value);
 
-	err = i210_read_phy_reg(adapter, I210_PHY_ID1, &id1);
-	if (err)
-		return err;
+		if (err) {
+			pr_err(DRV_NAME ": PHY[%02d] %-20s READ ERROR %d\n",
+			       i,
+			       phy_reg_names[i] ? phy_reg_names[i] : "",
+			       err);
+			continue;
+		}
 
-	err = i210_read_phy_reg(adapter, I210_PHY_ID2, &id2);
-	if (err)
-		return err;
+		pr_info(DRV_NAME ": PHY[%02d] %-20s = 0x%04x\n",
+			i,
+			phy_reg_names[i] ? phy_reg_names[i] : "",
+			value);
+	}
 
-	err = i210_read_phy_reg(adapter, I210_PHY_AN_ADV, &an_adv);
-	if (err)
-		return err;
-
-	err = i210_read_phy_reg(adapter, I210_PHY_AN_LP_ABILITY, &an_lp);
-	if (err)
-		return err;
-
-	err = i210_read_phy_reg(adapter, I210_PHY_1000_CTRL, &gb_ctrl);
-	if (err)
-		return err;
-
-	pr_info(DRV_NAME
-		": PHY dump:\n"
-		"  CTRL      = 0x%04x\n"
-		"  STATUS    = 0x%04x\n"
-		"  ID1       = 0x%04x\n"
-		"  ID2       = 0x%04x\n"
-		"  AN_ADV    = 0x%04x\n"
-		"  AN_LP     = 0x%04x\n"
-		"  1000_CTRL = 0x%04x\n",
-		ctrl,
-		status,
-		id1,
-		id2,
-		an_adv,
-		an_lp,
-		gb_ctrl);
-
-	pr_info(DRV_NAME
-		": PHY state: "
-		"LINK=%u "
-		"AN_ABILITY=%u "
-		"AN_COMPLETE=%u\n",
-		!!(status & I210_PHY_STATUS_LINK_STATUS),
-		!!(status & I210_PHY_STATUS_AN_ABILITY),
-		!!(status & I210_PHY_STATUS_AN_COMPLETE));
+	pr_info(DRV_NAME ": ============================================\n");
 
 	return 0;
 }
 
+
+void i210_dump_regs(struct i210_adapter *adapter)
+{
+	void __iomem *hw = adapter->hw.hw_addr;
+
+	pr_info(DRV_NAME ": ==================================================\n");
+	pr_info(DRV_NAME ":               I210 REGISTER DUMP\n");
+	pr_info(DRV_NAME ": ==================================================\n");
+
+	/*
+	 * MAC core
+	 */
+	pr_info(DRV_NAME ": --- MAC ---\n");
+
+	pr_info(DRV_NAME ": CTRL      = 0x%08x\n",
+		readl(hw + I210_CTRL));
+
+	pr_info(DRV_NAME ": STATUS    = 0x%08x\n",
+		readl(hw + I210_STATUS));
+
+	pr_info(DRV_NAME ": EERD      = 0x%08x\n",
+		readl(hw + I210_EERD));
+
+	pr_info(DRV_NAME ": EEC       = 0x%08x\n",
+		readl(hw + I210_EEC));
+
+	pr_info(DRV_NAME ": MDIC      = 0x%08x\n",
+		readl(hw + I210_MDIC));
+
+	/*
+	 * MAC address registers
+	 */
+	pr_info(DRV_NAME ": --- MAC ADDRESS ---\n");
+
+	pr_info(DRV_NAME ": RAL0      = 0x%08x\n",
+		readl(hw + I210_RAL0));
+
+	pr_info(DRV_NAME ": RAH0      = 0x%08x\n",
+		readl(hw + I210_RAH0));
+
+	/*
+	 * TX
+	 */
+	pr_info(DRV_NAME ": --- TX ---\n");
+
+	pr_info(DRV_NAME ": TCTL      = 0x%08x\n",
+		readl(hw + I210_TCTL));
+
+	pr_info(DRV_NAME ": TDBAL0    = 0x%08x\n",
+		readl(hw + I210_TDBAL(0)));
+
+	pr_info(DRV_NAME ": TDBAH0    = 0x%08x\n",
+		readl(hw + I210_TDBAH(0)));
+
+	pr_info(DRV_NAME ": TDLEN0    = 0x%08x\n",
+		readl(hw + I210_TDLEN(0)));
+
+	pr_info(DRV_NAME ": TDH0      = 0x%08x\n",
+		readl(hw + I210_TDH(0)));
+
+	pr_info(DRV_NAME ": TDT0      = 0x%08x\n",
+		readl(hw + I210_TDT(0)));
+
+	pr_info(DRV_NAME ": TXDCTL0   = 0x%08x\n",
+		readl(hw + I210_TXDCTL(0)));
+
+	/*
+	 * RX
+	 */
+	pr_info(DRV_NAME ": --- RX ---\n");
+
+	pr_info(DRV_NAME ": RCTL      = 0x%08x\n",
+		readl(hw + I210_RCTL));
+
+	pr_info(DRV_NAME ": RDBAL0    = 0x%08x\n",
+		readl(hw + I210_RDBAL(0)));
+
+	pr_info(DRV_NAME ": RDBAH0    = 0x%08x\n",
+		readl(hw + I210_RDBAH(0)));
+
+	pr_info(DRV_NAME ": RDLEN0    = 0x%08x\n",
+		readl(hw + I210_RDLEN(0)));
+
+	pr_info(DRV_NAME ": RDH0      = 0x%08x\n",
+		readl(hw + I210_RDH(0)));
+
+	pr_info(DRV_NAME ": RDT0      = 0x%08x\n",
+		readl(hw + I210_RDT(0)));
+
+	pr_info(DRV_NAME ": RXDCTL0   = 0x%08x\n",
+		readl(hw + I210_RXDCTL(0)));
+
+	pr_info(DRV_NAME ": SRRCTL0   = 0x%08x\n",
+		readl(hw + I210_SRRCTL(0)));
+
+	/*
+	 * PHY
+	 */
+	pr_info(DRV_NAME ": --- PHY ---\n");
+
+	i210_dump_phy(adapter);
+
+	pr_info(DRV_NAME ": ==================================================\n");
+}
+
+
+int i210_phy_power_up(struct i210_adapter *adapter)
+{
+	u16 ctrl;
+	int err;
+
+	err = i210_read_phy_reg(adapter, 0, &ctrl);
+	if (err) {
+		pr_err(DRV_NAME ": failed to read PHY BMCR: %d\n", err);
+		return err;
+	}
+
+	pr_info(DRV_NAME ": PHY BMCR before power-up = 0x%04x\n", ctrl);
+
+	ctrl &= ~BIT(11); /* POWER DOWN */
+	ctrl &= ~BIT(10); /* ISOLATE */
+
+	err = i210_write_phy_reg(adapter, 0, ctrl);
+	if (err) {
+		pr_err(DRV_NAME ": failed to write PHY BMCR: %d\n", err);
+		return err;
+	}
+
+	pr_info(DRV_NAME ": PHY BMCR after power-up = 0x%04x\n", ctrl);
+
+	return 0;
+}
 
 int i210_get_phy_link(struct i210_adapter *adapter, bool *link)
 {
@@ -1096,7 +1282,16 @@ int i210_init_phy(struct i210_adapter *adapter)
 	pr_info(DRV_NAME ": MAC CTRL after SLU = 0x%08x\n", ctrl);
 
 	/*
-	 * First inspect the PHY state.
+	 * Bring PHY out of power-down and isolate modes.
+	 */
+	err = i210_phy_power_up(adapter);
+	if (err) {
+		pr_err(DRV_NAME ": PHY power-up failed: %d\n", err);
+		return err;
+	}
+
+	/*
+	 * Dump PHY state after power-up, before autonegotiation.
 	 */
 	err = i210_dump_phy(adapter);
 	if (err)
@@ -1106,8 +1301,22 @@ int i210_init_phy(struct i210_adapter *adapter)
 	 * Start PHY auto-negotiation.
 	 */
 	err = i210_phy_start_autoneg(adapter);
-	if (err)
+	if (err) {
+		pr_err(DRV_NAME ": PHY autonegotiation start failed: %d\n", err);
 		return err;
+	}
 
 	return 0;
+}
+
+
+void i210_configure_tx_buffer(struct i210_adapter *adapter)
+{
+    void __iomem *hw = adapter->hw.hw_addr;
+
+    writel(I210_TXPBSIZE_DEFAULT, hw + I210_TXPBS);
+    writel(I210_DTXMXPKTSZ_DEFAULT, hw + I210_DTXMXPKTSZ);
+
+    pr_info(DRV_NAME ": TXPBS=0x%08x DTXMXPKTSZ=0x%08x\n",
+		readl(hw + I210_TXPBS), readl(hw + I210_DTXMXPKTSZ));
 }

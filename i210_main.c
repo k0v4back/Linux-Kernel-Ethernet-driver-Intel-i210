@@ -74,6 +74,11 @@ static int i210_open(struct net_device *netdev)
 		return err;
 	}
 
+	pr_info(DRV_NAME ": ===== PHY/MAC DUMP: after PHY init =====\n");
+	i210_dump_regs(adapter);
+
+	i210_configure_tx_buffer(adapter);
+
 	/*
 	 * Setup TX resources
 	 */
@@ -142,6 +147,9 @@ static int i210_open(struct net_device *netdev)
 			       err);
 		}
 
+		pr_info(DRV_NAME ": ===== PHY/MAC DUMP: link timeout =====\n");
+		i210_dump_regs(adapter);
+
 		goto err_free_rx;
 	}
 
@@ -195,12 +203,75 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
 
 	pr_info(DRV_NAME ": i210_xmit() skb_len=%u\n", skb->len);
 
+    /*
+     * DEBUG: inspect actual Ethernet frame from Linux
+     */
+    if (skb->len >= ETH_HLEN) {
+        struct ethhdr *eth = (struct ethhdr *)skb->data;
+
+        pr_info(DRV_NAME
+			": TX ETH src=%pM dst=%pM proto=0x%04x len=%u\n",
+			eth->h_source,
+			eth->h_dest,
+			ntohs(eth->h_proto),
+			skb->len
+		);
+
+        if (eth->h_proto == htons(ETH_P_ARP) &&
+            skb->len >= ETH_HLEN + sizeof(struct arphdr)) {
+            struct arphdr *arp = (struct arphdr *)(skb->data + ETH_HLEN);
+            pr_info(DRV_NAME
+				": TX ARP htype=%u ptype=0x%04x "
+				"hlen=%u plen=%u op=%u\n",
+				ntohs(arp->ar_hrd),
+				ntohs(arp->ar_pro),
+				arp->ar_hln,
+				arp->ar_pln,
+				ntohs(arp->ar_op)
+			);
+        }
+
+		if (eth->h_proto == htons(ETH_P_ARP) &&
+			skb->len >= ETH_HLEN + sizeof(struct arphdr) + 20) {
+
+			struct arphdr *arp =
+				(struct arphdr *)(skb->data + ETH_HLEN);
+
+			unsigned char *arp_ptr = (unsigned char *)(arp + 1);
+
+			unsigned char *sha = arp_ptr;
+			__be32 *spa = (__be32 *)(arp_ptr + 6);
+			unsigned char *tha = arp_ptr + 10;
+			__be32 *tpa = (__be32 *)(arp_ptr + 16);
+
+			pr_info(DRV_NAME
+					": TX ARP op=%u "
+					"sha=%pM spa=%pI4 "
+					"tha=%pM tpa=%pI4\n",
+					ntohs(arp->ar_op),
+					sha,
+					spa,
+					tha,
+					tpa);
+		}
+    }
+
 	if (i210_tx_ring_full(tx_ring)) {
 		netif_stop_queue(netdev);
 		return NETDEV_TX_BUSY;
 	}
 
     i = tx_ring->next_to_use;
+
+	pr_info(DRV_NAME
+		": TX ring BEFORE: "
+		"idx=%u TDH=%u TDT=%u "
+		"next_to_use=%u next_to_clean=%u\n",
+		i,
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)),
+		tx_ring->next_to_use,
+		tx_ring->next_to_clean);
 
     tx_desc = &tx_ring->desc[i];
     tx_buffer = &tx_ring->buffer_info[i];
@@ -231,25 +302,86 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb,
 			I210_TXD_CMD_DEXT) << I210_TXD_CMD_SHIFT;
 
     tx_desc->cmd_type_len = cpu_to_le32(cmd);
-    tx_desc->olinfo_status = 0;
+    // tx_desc->olinfo_status = 0;
+	tx_desc->olinfo_status = cpu_to_le32((u32)skb->len << I210_TXD_PAYLEN_SHIFT);
 
-    wmb();
+	pr_info(DRV_NAME
+		": TX desc[%u]: "
+		"dma=%pad "
+		"skb_len=%u "
+		"addr=%016llx "
+		"cmd_type_len=0x%08x "
+		"olinfo_status=0x%08x\n",
+		i,
+		&dma,
+		skb->len,
+		(unsigned long long)
+			le64_to_cpu(tx_ring->desc[i].buffer_addr),
+		le32_to_cpu(tx_ring->desc[i].cmd_type_len),
+		le32_to_cpu(tx_ring->desc[i].olinfo_status));
 
-    i++;
-    if (i == tx_ring->count)
-        i = 0;
+    dma_wmb();
 
-    tx_ring->next_to_use = i;
-    writel(i, adapter->hw.hw_addr + I210_TDT(0));
-	udelay(10);
-	i210_clean_tx(adapter);
-	i210_clean_rx(adapter, 64);
+	i++;
+	if (i == tx_ring->count)
+		i = 0;
+
+	tx_ring->next_to_use = i;
+
+	pr_info(DRV_NAME
+		": TX publish: "
+		"writing TDT=%u "
+		"TDH_before=%u TDT_before=%u\n",
+		i,
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)));
+
+	writel(i, adapter->hw.hw_addr + I210_TDT(0));
+
+	pr_info(DRV_NAME
+		": TX REG: "
+		"TCTL=0x%08x "
+		"TDH=%u "
+		"TDT=%u "
+		"TXDCTL=0x%08x "
+		"TDLEN=0x%08x\n",
+		readl(adapter->hw.hw_addr + I210_TCTL),
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)),
+		readl(adapter->hw.hw_addr + I210_TXDCTL(0)),
+		readl(adapter->hw.hw_addr + I210_TDLEN(0)));
+
+	pr_info(DRV_NAME
+		": TX BASE: "
+		"TDBAL=0x%08x "
+		"TDBAH=0x%08x\n",
+		readl(adapter->hw.hw_addr + I210_TDBAL(0)),
+		readl(adapter->hw.hw_addr + I210_TDBAH(0)));
+
+	pr_info(DRV_NAME
+		": TX publish: "
+		"TDH_after=%u TDT_after=%u\n",
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)));
+
+	// i210_clean_tx(adapter);
+	// i210_clean_rx(adapter, 64);
 
 	pr_info(DRV_NAME ": TX ring: TDH=%u TDT=%u\n",
 	readl(adapter->hw.hw_addr + I210_TDH(0)),
 	readl(adapter->hw.hw_addr + I210_TDT(0)));
 
 	udelay(10);
+
+	pr_info(DRV_NAME
+		": TX desc[%u] AFTER 10us: "
+		"cmd_type_len=0x%08x "
+		"olinfo_status=0x%08x\n",
+		(i == 0) ? tx_ring->count - 1 : i - 1,
+		le32_to_cpu(tx_ring->desc[(i == 0) ?
+			tx_ring->count - 1 : i - 1].cmd_type_len),
+		le32_to_cpu(tx_ring->desc[(i == 0) ?
+			tx_ring->count - 1 : i - 1].olinfo_status));
 
     return NETDEV_TX_OK;
 }
