@@ -312,40 +312,19 @@ int i210_configure_rx_ring(struct i210_adapter *adapter)
 	u32 rxdctl;
 	int timeout = 1000;
 
-	pr_info(DRV_NAME ": configuring RX ring\n");
-
-	writel(lower_32_bits(rx_ring->dma), hw + I210_RDBAL(0));
+	writel(lower_32_bits(rx_ring->dma),hw + I210_RDBAL(0));
 	writel(upper_32_bits(rx_ring->dma), hw + I210_RDBAH(0));
 	writel(rx_ring->size, hw + I210_RDLEN(0));
 
 	writel(0, hw + I210_SRRCTL(0));
-
-	/*
-	 * Hardware starts from descriptor 0.
-	 */
 	writel(0, hw + I210_RDH(0));
-
-	/*
-	 * Give all descriptors to hardware.
-	 */
-	// writel(rx_ring->count - 1, hw + I210_RDT(0));
 	writel(0, hw + I210_RDT(0));
-	pr_info(DRV_NAME ": RX ring before enable: RDH=%u RDT=%u\n",
-		readl(hw + I210_RDH(0)), readl(hw + I210_RDT(0))
-	);
 
 	rxdctl = readl(hw + I210_RXDCTL(0));
-	pr_info(DRV_NAME ": RXDCTL before enable = 0x%08x\n", rxdctl);
-
-	/*
-	 * RXDCTL.ENABLE
-	 */
 	rxdctl |= I210_RXDCTL_ENABLE;
+
 	writel(rxdctl, hw + I210_RXDCTL(0));
 
-	/*
-	 * Wait until hardware reports queue enabled.
-	 */
 	do {
 		rxdctl = readl(hw + I210_RXDCTL(0));
 		if (rxdctl & I210_RXDCTL_ENABLE)
@@ -353,40 +332,22 @@ int i210_configure_rx_ring(struct i210_adapter *adapter)
 		udelay(1);
 	} while (--timeout);
 
-	if (!(rxdctl & I210_RXDCTL_ENABLE)) {
-		pr_err(DRV_NAME ": RX queue failed to enable\n");
+	if (!(rxdctl & I210_RXDCTL_ENABLE))
 		return -ETIMEDOUT;
-	}
 
-	pr_info(DRV_NAME ": RXDCTL after enable = 0x%08x\n", rxdctl);
-
+	/*
+	 * Make descriptors visible to the device
+	 * before giving the ring to hardware
+	 */
 	dma_wmb();
 
 	/*
-	 * NOW give descriptors to hardware.
+	 * Give descriptors 0..count-1 to hardware
 	 */
 	writel(rx_ring->count - 1, hw + I210_RDT(0));
 
-	pr_info(
-		DRV_NAME
-		": RX ring regs: "
-		"RDBAL=0x%08x "
-		"RDBAH=0x%08x "
-		"RDLEN=0x%08x "
-		"RDH=%u "
-		"RDT=%u "
-		"RXDCTL=0x%08x\n",
-		readl(hw + I210_RDBAL(0)),
-		readl(hw + I210_RDBAH(0)),
-		readl(hw + I210_RDLEN(0)),
-		readl(hw + I210_RDH(0)),
-		readl(hw + I210_RDT(0)),
-		readl(hw + I210_RXDCTL(0))
-	);
-
 	return 0;
 }
-
 
 void i210_free_rx_resources(struct i210_adapter *adapter)
 {
@@ -444,29 +405,17 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 	struct pci_dev *pdev = adapter->pdev;
 	void __iomem *hw = adapter->hw.hw_addr;
 	int work_done = 0;
-	u32 status_reg;
-	struct ethhdr *eth;
-	struct iphdr *iph;
-
-	status_reg = readl(hw + I210_STATUS);
-
-	pr_info(DRV_NAME ": RX state: STATUS=0x%08x RDH=%u RDT=%u RXDCTL=0x%08x RCTL=0x%08x\n",
-		status_reg,
-		readl(hw + I210_RDH(0)),
-		readl(hw + I210_RDT(0)),
-		readl(hw + I210_RXDCTL(0)),
-		readl(hw + I210_RCTL));
 
 	while (work_done < budget) {
+		struct i210_rx_desc *rx_desc;
+		struct i210_rx_buffer *rx_buffer;
+		struct sk_buff *skb;
 		u16 i;
 		u16 length;
 		u8 status;
 
-		struct i210_rx_desc *rx_desc;
-		struct i210_rx_buffer *rx_buffer;
-		struct sk_buff *skb;
-
 		i = rx_ring->next_to_clean;
+
 		rx_desc = &rx_ring->desc[i];
 		rx_buffer = &rx_ring->buffer_info[i];
 
@@ -477,24 +426,29 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 		dma_rmb();
 
 		length = le16_to_cpu(READ_ONCE(rx_desc->length));
-		pr_info(
-			DRV_NAME
-			": RX desc[%u]: "
-			"status=0x%02x "
-			"length=%u "
-			"errors=0x%02x\n",
-			i,
-			status,
-			length,
-			rx_desc->errors
-		);
 
 		skb = rx_buffer->skb;
 		if (!skb) {
-			pr_err(DRV_NAME
-			       ": RX desc[%u] has no skb\n",
-			       i);
+			pr_err(DRV_NAME ": RX desc[%u] has no skb\n", i);
 			break;
+		}
+
+		if (!(status & I210_RXD_STAT_EOP)) {
+			pr_err(DRV_NAME ": RX desc[%u] is not EOP\n", i);
+
+			dma_unmap_single(
+				&pdev->dev,
+				rx_buffer->dma,
+				I210_RX_BUFFER_SIZE,
+				DMA_FROM_DEVICE
+			);
+
+			rx_buffer->skb = NULL;
+			rx_buffer->dma = 0;
+
+			dev_kfree_skb_any(skb);
+
+			goto refill;
 		}
 
 		dma_unmap_single(
@@ -504,69 +458,10 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 			DMA_FROM_DEVICE
 		);
 
-		rx_buffer->dma = 0;
 		rx_buffer->skb = NULL;
-
-		/*
-		 * For the first version we expect
-		 * one descriptor per packet.
-		 */
-		if (!(status & I210_RXD_STAT_EOP)) {
-			pr_err(
-				DRV_NAME
-				": RX desc[%u]: "
-				"packet is not EOP\n",
-				i
-			);
-
-			dev_kfree_skb_any(skb);
-			goto refill;
-		}
+		rx_buffer->dma = 0;
 
 		skb_put(skb, length);
-
-		if (skb->len >= ETH_HLEN) {
-			struct ethhdr *eth = (struct ethhdr *)skb->data;
-
-			pr_info(DRV_NAME
-				": RX ETH src=%pM dst=%pM proto=0x%04x len=%u\n",
-				eth->h_source,
-				eth->h_dest,
-				ntohs(eth->h_proto),
-				skb->len);
-
-			if (eth->h_proto == htons(ETH_P_ARP)) {
-				struct arphdr *arp;
-
-				if (skb->len >= ETH_HLEN + sizeof(struct arphdr)) {
-					arp = (struct arphdr *)(skb->data + ETH_HLEN);
-
-					pr_info(DRV_NAME
-						": RX ARP htype=%u ptype=0x%04x hlen=%u plen=%u op=%u\n",
-						ntohs(arp->ar_hrd),
-						ntohs(arp->ar_pro),
-						arp->ar_hln,
-						arp->ar_pln,
-						ntohs(arp->ar_op));
-				}
-			}
-
-			if (eth->h_proto == htons(ETH_P_IP) &&
-				skb->len >= ETH_HLEN + sizeof(struct iphdr)) {
-
-				struct iphdr *iph =
-					(struct iphdr *)(skb->data + ETH_HLEN);
-
-				pr_info(DRV_NAME
-					": RX IPv4 src=%pI4 dst=%pI4 proto=%u ttl=%u len=%u id=0x%04x\n",
-					&iph->saddr,
-					&iph->daddr,
-					iph->protocol,
-					iph->ttl,
-					ntohs(iph->tot_len),
-					ntohs(iph->id));
-			}
-		}
 
 		skb->protocol = eth_type_trans(skb, adapter->netdev);
 
@@ -574,20 +469,16 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 
 refill:
 		if (i210_alloc_rx_buffer(adapter, i)) {
-			pr_err(
-				DRV_NAME
-				": failed to refill RX desc[%u]\n",
-				i
-			);
+			pr_err(DRV_NAME ": RX refill failed for desc[%u]\n", i);
 			break;
 		}
 
-		/*
-		 * Return descriptor to hardware.
-		 */
+		dma_wmb();
+
 		writel(i, hw + I210_RDT(0));
 
 		rx_ring->next_to_clean++;
+
 		if (rx_ring->next_to_clean == rx_ring->count)
 			rx_ring->next_to_clean = 0;
 
@@ -596,7 +487,6 @@ refill:
 
 	return work_done;
 }
-
 
 int i210_alloc_rx_buffer(struct i210_adapter *adapter, u16 i)
 {
@@ -627,7 +517,9 @@ int i210_alloc_rx_buffer(struct i210_adapter *adapter, u16 i)
 	rx_buffer->dma = dma;
 
 	rx_ring->desc[i].buffer_addr = cpu_to_le64(dma);
+	rx_ring->desc[i].length = 0;
 	rx_ring->desc[i].status = 0;
+	rx_ring->desc[i].errors = 0;
 
 	return 0;
 }
@@ -1032,111 +924,6 @@ int i210_dump_phy(struct i210_adapter *adapter)
 }
 
 
-void i210_dump_regs(struct i210_adapter *adapter)
-{
-	void __iomem *hw = adapter->hw.hw_addr;
-
-	pr_info(DRV_NAME ": ==================================================\n");
-	pr_info(DRV_NAME ":               I210 REGISTER DUMP\n");
-	pr_info(DRV_NAME ": ==================================================\n");
-
-	/*
-	 * MAC core
-	 */
-	pr_info(DRV_NAME ": --- MAC ---\n");
-
-	pr_info(DRV_NAME ": CTRL      = 0x%08x\n",
-		readl(hw + I210_CTRL));
-
-	pr_info(DRV_NAME ": STATUS    = 0x%08x\n",
-		readl(hw + I210_STATUS));
-
-	pr_info(DRV_NAME ": EERD      = 0x%08x\n",
-		readl(hw + I210_EERD));
-
-	pr_info(DRV_NAME ": EEC       = 0x%08x\n",
-		readl(hw + I210_EEC));
-
-	pr_info(DRV_NAME ": MDIC      = 0x%08x\n",
-		readl(hw + I210_MDIC));
-
-	/*
-	 * MAC address registers
-	 */
-	pr_info(DRV_NAME ": --- MAC ADDRESS ---\n");
-
-	pr_info(DRV_NAME ": RAL0      = 0x%08x\n",
-		readl(hw + I210_RAL0));
-
-	pr_info(DRV_NAME ": RAH0      = 0x%08x\n",
-		readl(hw + I210_RAH0));
-
-	/*
-	 * TX
-	 */
-	pr_info(DRV_NAME ": --- TX ---\n");
-
-	pr_info(DRV_NAME ": TCTL      = 0x%08x\n",
-		readl(hw + I210_TCTL));
-
-	pr_info(DRV_NAME ": TDBAL0    = 0x%08x\n",
-		readl(hw + I210_TDBAL(0)));
-
-	pr_info(DRV_NAME ": TDBAH0    = 0x%08x\n",
-		readl(hw + I210_TDBAH(0)));
-
-	pr_info(DRV_NAME ": TDLEN0    = 0x%08x\n",
-		readl(hw + I210_TDLEN(0)));
-
-	pr_info(DRV_NAME ": TDH0      = 0x%08x\n",
-		readl(hw + I210_TDH(0)));
-
-	pr_info(DRV_NAME ": TDT0      = 0x%08x\n",
-		readl(hw + I210_TDT(0)));
-
-	pr_info(DRV_NAME ": TXDCTL0   = 0x%08x\n",
-		readl(hw + I210_TXDCTL(0)));
-
-	/*
-	 * RX
-	 */
-	pr_info(DRV_NAME ": --- RX ---\n");
-
-	pr_info(DRV_NAME ": RCTL      = 0x%08x\n",
-		readl(hw + I210_RCTL));
-
-	pr_info(DRV_NAME ": RDBAL0    = 0x%08x\n",
-		readl(hw + I210_RDBAL(0)));
-
-	pr_info(DRV_NAME ": RDBAH0    = 0x%08x\n",
-		readl(hw + I210_RDBAH(0)));
-
-	pr_info(DRV_NAME ": RDLEN0    = 0x%08x\n",
-		readl(hw + I210_RDLEN(0)));
-
-	pr_info(DRV_NAME ": RDH0      = 0x%08x\n",
-		readl(hw + I210_RDH(0)));
-
-	pr_info(DRV_NAME ": RDT0      = 0x%08x\n",
-		readl(hw + I210_RDT(0)));
-
-	pr_info(DRV_NAME ": RXDCTL0   = 0x%08x\n",
-		readl(hw + I210_RXDCTL(0)));
-
-	pr_info(DRV_NAME ": SRRCTL0   = 0x%08x\n",
-		readl(hw + I210_SRRCTL(0)));
-
-	/*
-	 * PHY
-	 */
-	pr_info(DRV_NAME ": --- PHY ---\n");
-
-	i210_dump_phy(adapter);
-
-	pr_info(DRV_NAME ": ==================================================\n");
-}
-
-
 int i210_phy_power_up(struct i210_adapter *adapter)
 {
 	u16 ctrl;
@@ -1163,6 +950,7 @@ int i210_phy_power_up(struct i210_adapter *adapter)
 
 	return 0;
 }
+
 
 int i210_get_phy_link(struct i210_adapter *adapter, bool *link)
 {
