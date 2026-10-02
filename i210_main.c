@@ -126,6 +126,21 @@ static int i210_open(struct net_device *netdev)
 	i210_configure_rx(adapter);
 
 	/*
+	 * Interrupt setup
+	 */
+	i210_disable_interrupts(adapter);
+
+	err = i210_alloc_irq(adapter);
+	if (err)
+		goto err_free_tx;
+
+	err = i210_request_irq(adapter);
+	if (err)
+		goto err_free_tx;
+
+	i210_configure_interrupts(adapter);
+
+	/*
 	 * Wait for PHY link
 	 *
 	 * This is temporary for the learning/debugging stage
@@ -168,10 +183,25 @@ static int i210_close(struct net_device *netdev)
 
 	pr_info(DRV_NAME ": i210_close()\n");
 
-	/* Stop accepting new packets from the network stack. */
+	/*
+	 * Stop accepting new packets from the network stack
+	 */
 	netif_stop_queue(netdev);
 
 	netif_carrier_off(netdev);
+
+	/* 
+	 * Disable device interrupts
+	 */
+	i210_disable_interrupts(adapter);
+
+	if (adapter->irq_vectors) {
+		free_irq(adapter->irq, adapter);
+
+		pci_free_irq_vectors(adapter->pdev);
+
+		adapter->irq_vectors = 0;
+	}
 
 	/*
 	 * Now it is safe to release the rings and RX buffers.
@@ -239,11 +269,11 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	writel(i, adapter->hw.hw_addr + I210_TDT(0));
 
-	int ii;
-	for (ii = 0; ii < 100; ii++) {
-		i210_clean_rx(adapter, 64);
-		udelay(100);
-	}
+	// int ii;
+	// for (ii = 0; ii < 100; ii++) {
+	// 	i210_clean_rx(adapter, 64);
+	// 	udelay(100);
+	// }
 
 	return NETDEV_TX_OK;
 }

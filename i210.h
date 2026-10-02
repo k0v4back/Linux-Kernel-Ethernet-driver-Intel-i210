@@ -75,6 +75,9 @@ struct i210_adapter {
 	struct napi_struct napi;
 	struct i210_tx_ring tx_ring;
 	struct i210_rx_ring rx_ring;
+
+	int irq;
+	unsigned int irq_vectors;
 };
 
 #endif /* _I210_H_ */
