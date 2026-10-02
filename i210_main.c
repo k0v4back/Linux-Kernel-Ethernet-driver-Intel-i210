@@ -239,6 +239,12 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	writel(i, adapter->hw.hw_addr + I210_TDT(0));
 
+	int ii;
+	for (ii = 0; ii < 100; ii++) {
+		i210_clean_rx(adapter, 64);
+		udelay(100);
+	}
+
 	return NETDEV_TX_OK;
 }
 
