@@ -1110,17 +1110,24 @@ void i210_configure_tx_buffer(struct i210_adapter *adapter)
 }
 
 
-static int i210_alloc_irq(struct i210_adapter *adapter)
+int i210_alloc_irq(struct i210_adapter *adapter)
 {
 	struct pci_dev *pdev = adapter->pdev;
 	int ret;
 
-	ret = pci_alloc_irq_vectors(pdev, 1, 1,	PCI_IRQ_MSI | PCI_IRQ_INTX);
+	ret = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_MSI);
 	if (ret < 0) {
-		dev_err(&pdev->dev,
-			"failed to allocate IRQ vectors: %d\n", ret);
+		dev_err(&pdev->dev, "failed to allocate MSI IRQ vector: %d\n", ret);
 		return ret;
 	}
+
+	dev_info(&pdev->dev,
+		"IRQ allocated: vector=%d irq=%d MSI=%d MSI-X=%d\n",
+		0,
+		pci_irq_vector(pdev, 0),
+		pdev->msi_enabled,
+		pdev->msix_enabled
+	);
 
 	adapter->irq_vectors = ret;
 	adapter->irq = pci_irq_vector(pdev, 0);
@@ -1151,7 +1158,10 @@ void i210_configure_interrupts(struct i210_adapter *adapter)
 	u32 ivar;
 
 	/* RX queue 0 -> EICR bit 0 */
-	ivar = I210_IVAR_RX0_VALID | (0 << I210_IVAR_RX0_SHIFT);
+	// ivar = I210_IVAR_RX0_VALID | (0 << I210_IVAR_RX0_SHIFT);
+	ivar = 0;
+	ivar |= 0 << I210_IVAR_RX0_SHIFT;
+	ivar |= I210_IVAR_RX0_VALID;
 	writel(ivar, hw + I210_IVAR);
 
 	/* Enable RX queue 0 interrupt */
@@ -1179,26 +1189,38 @@ void i210_disable_interrupts(struct i210_adapter *adapter)
 
 irqreturn_t i210_interrupt(int irq, void *data)
 {
-	struct i210_adapter *adapter = data;
-	void __iomem *hw = adapter->hw.hw_addr;
-	u32 eicr;
+    struct i210_adapter *adapter = data;
+    void __iomem *hw = adapter->hw.hw_addr;
+    u32 eicr;
 
-	eicr = readl(hw + I210_EICR);
-	if (!eicr)
-		return IRQ_NONE;
+    eicr = readl(hw + I210_EICR);
 
-	pr_info(DRV_NAME
-		": IRQ %d: EICR=0x%08x RDH=%u RDT=%u\n",
+    if (!eicr)
+        return IRQ_NONE;
+
+    pr_info(DRV_NAME
+		": IRQ %d: EICR=0x%08x EIMS=0x%08x RDH=%u RDT=%u\n",
 		irq,
 		eicr,
+		readl(hw + I210_EIMS),
 		readl(hw + I210_RDH(0)),
-		readl(hw + I210_RDT(0)));
+		readl(hw + I210_RDT(0))
+	);
 
-	napi_schedule(&adapter->napi);
+    /*
+     * Disable RX/TX queue interrupts while NAPI is running
+     */
+    writel(I210_EICR_RXTXQ0, hw + I210_EIMC);
 
-	return IRQ_HANDLED;
+    /*
+     * Clear interrupt cause
+     */
+    writel(eicr, hw + I210_EICR);
+
+    napi_schedule(&adapter->napi);
+
+    return IRQ_HANDLED;
 }
-
 
 int i210_request_irq(struct i210_adapter *adapter)
 {

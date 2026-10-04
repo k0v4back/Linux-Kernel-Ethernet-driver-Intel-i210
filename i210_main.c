@@ -138,6 +138,10 @@ static int i210_open(struct net_device *netdev)
 	if (err)
 		goto err_free_tx;
 
+	pr_info(DRV_NAME ": NAPI before enable: state=0x%lx\n", adapter->napi.state);
+	napi_enable(&adapter->napi);
+	pr_info(DRV_NAME ": NAPI after enable: state=0x%lx\n", adapter->napi.state);
+
 	i210_configure_interrupts(adapter);
 
 	/*
@@ -194,6 +198,8 @@ static int i210_close(struct net_device *netdev)
 	 * Disable device interrupts
 	 */
 	i210_disable_interrupts(adapter);
+
+	napi_disable(&adapter->napi);
 
 	if (adapter->irq_vectors) {
 		free_irq(adapter->irq, adapter);
@@ -301,18 +307,33 @@ static int i210_clean(struct napi_struct *napi, int budget)
         container_of(napi, struct i210_adapter, napi);
 
     int work_done = 0;
-    while (work_done < budget) {
-        int ret;
 
-        ret = i210_clean_rx(adapter, budget - work_done);
+    pr_info(DRV_NAME ": NAPI poll: budget=%d\n", budget);
+
+    while (work_done < budget) {
+        int ret = i210_clean_rx(adapter, budget - work_done);
         if (ret <= 0)
             break;
 
-        work_done += ret;
-    }
+		i210_clean_tx(adapter);
 
-    if (work_done < budget)
-        napi_complete_done(napi, work_done);
+        work_done += ret;
+	}
+
+    pr_info(DRV_NAME ": NAPI poll done: work_done=%d\n", work_done);
+
+    // if (work_done < budget) {
+    //     napi_complete_done(napi, work_done);
+    // }
+
+	if (work_done < budget) {
+		if (napi_complete_done(napi, work_done)) {
+			/*
+			* Re-enable RX/TX queue interrupt
+			*/
+			writel(I210_EICR_RXTXQ0, adapter->hw.hw_addr + I210_EIMS);
+		}
+	}
 
     return work_done;
 }
@@ -413,7 +434,9 @@ static int i210_probe(struct pci_dev *pdev,
 	netdev->netdev_ops = &i210_netdev_ops;
 	netdev->ethtool_ops = &i210_ethtool_ops;
 	netdev->watchdog_timeo = 5 * HZ;
+	pr_info(DRV_NAME ": adding NAPI\n");
 	netif_napi_add(netdev, &adapter->napi, i210_clean, 64);
+	pr_info(DRV_NAME ": NAPI added\n");
 	strcpy(netdev->name, "eth%d");
 
 	/* 11. Register net_device */

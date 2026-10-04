@@ -291,19 +291,23 @@
 #define I210_TCTL_CT       (15U << I210_TCTL_CT_SHIFT)
 
 
-#define I210_ICR            0x000C0
-#define I210_IMS            0x000D0
-#define I210_IMC            0x000D8
+#define I210_ICR              0x000C0
+#define I210_ICS              0x000C8
+#define I210_IMS              0x000D0
+#define I210_IMC              0x000D8
+#define I210_IAM              0x000E0
+#define I210_EICS             0x01520
+#define I210_EIMS             0x01524
+#define I210_EIMC             0x01528
+#define I210_EIAC             0x0152C
+#define I210_EIAM             0x01530
+#define I210_EICR             0x01580
 
-#define I210_EICR           0x01580
-#define I210_EIMS          0x01524
-#define I210_EIMC          0x0152C
+#define I210_IVAR             0x01700
 
-#define I210_IVAR           0x01700
+#define I210_EICR_RXTXQ0     BIT(0)
+#define I210_IVAR_RX0_SHIFT  0
+#define I210_IVAR_RX0_VALID  BIT(7)
 
-#define I210_EICR_RXTXQ0    BIT(0)
-
-#define I210_IVAR_RX0_SHIFT 0
-#define I210_IVAR_RX0_VALID BIT(7)
 
 #endif /* _I210_DEFINES_H_ */
