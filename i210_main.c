@@ -275,11 +275,12 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	writel(i, adapter->hw.hw_addr + I210_TDT(0));
 
-	// int ii;
-	// for (ii = 0; ii < 100; ii++) {
-	// 	i210_clean_rx(adapter, 64);
-	// 	udelay(100);
-	// }
+	pr_info(DRV_NAME
+		": TX XMIT: idx=%u next_to_use=%u TDH=%u TDT=%u\n",
+		i,
+		tx_ring->next_to_use,
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)));
 
 	return NETDEV_TX_OK;
 }
@@ -306,34 +307,31 @@ static int i210_clean(struct napi_struct *napi, int budget)
     struct i210_adapter *adapter =
         container_of(napi, struct i210_adapter, napi);
 
-    int work_done = 0;
+    int work_done;
 
     pr_info(DRV_NAME ": NAPI poll: budget=%d\n", budget);
 
-    while (work_done < budget) {
-        int ret = i210_clean_rx(adapter, budget - work_done);
-        if (ret <= 0)
-            break;
+    /*
+     * RX processing consumes the NAPI budget
+     */
+    work_done = i210_clean_rx(adapter, budget);
 
-		i210_clean_tx(adapter);
-
-        work_done += ret;
-	}
+    /*
+     * TX cleanup does not consume the RX budget
+     */
+    i210_clean_tx(adapter);
 
     pr_info(DRV_NAME ": NAPI poll done: work_done=%d\n", work_done);
 
-    // if (work_done < budget) {
-    //     napi_complete_done(napi, work_done);
-    // }
-
-	if (work_done < budget) {
-		if (napi_complete_done(napi, work_done)) {
-			/*
-			* Re-enable RX/TX queue interrupt
-			*/
-			writel(I210_EICR_RXTXQ0, adapter->hw.hw_addr + I210_EIMS);
-		}
-	}
+    if (work_done < budget) {
+        if (napi_complete_done(napi, work_done)) {
+            /*
+             * No more RX work
+             * Re-enable RX/TX queue interrupt
+             */
+            writel(I210_EICR_RXTXQ0, adapter->hw.hw_addr + I210_EIMS);
+        }
+    }
 
     return work_done;
 }

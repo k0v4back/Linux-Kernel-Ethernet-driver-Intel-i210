@@ -718,47 +718,74 @@ bool i210_tx_ring_full(struct i210_tx_ring *tx_ring)
 
 void i210_clean_tx(struct i210_adapter *adapter)
 {
-	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
-	struct device *dev = &adapter->pdev->dev;
+    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+    struct pci_dev *pdev = adapter->pdev;
+    struct net_device *netdev = adapter->netdev;
 
-	while (tx_ring->next_to_clean != tx_ring->next_to_use) {
-		u16 i = tx_ring->next_to_clean;
-		struct i210_tx_desc *tx_desc = &tx_ring->desc[i];
-		struct i210_tx_buffer *tx_buffer = &tx_ring->buffer_info[i];
-		u32 status;
+    bool cleaned = false;
 
-		status = le32_to_cpu(tx_desc->olinfo_status);
+    while (tx_ring->next_to_clean != tx_ring->next_to_use) {
+        u16 i = tx_ring->next_to_clean;
+        struct i210_tx_desc *tx_desc = &tx_ring->desc[i];
+        struct i210_tx_buffer *tx_buffer = &tx_ring->buffer_info[i];
 
-		if (!(status & I210_TXD_STAT_DD))
-			break;
+        u32 status;
+
+        status = le32_to_cpu(READ_ONCE(tx_desc->olinfo_status));
+
+        /*
+         * Hardware has not completed this descriptor yet
+         */
+        if (!(status & I210_TXD_STAT_DD))
+            break;
 
 		pr_info(DRV_NAME
-			": cleaning TX desc[%u]: status=0x%08x\n",
-			i, status);
+			": TX CLEAN: idx=%u TDH=%u TDT=%u DD=1 skb=%p len=%u\n",
+			i,
+			readl(adapter->hw.hw_addr + I210_TDH(0)),
+			readl(adapter->hw.hw_addr + I210_TDT(0)),
+			tx_buffer->skb,
+			tx_buffer->len);
 
-		if (tx_buffer->skb) {
-			dma_unmap_single(dev,
-					 tx_buffer->dma,
-					 tx_buffer->len,
-					 DMA_TO_DEVICE);
+        /*
+         * Descriptor is complete
+         */
+        if (tx_buffer->skb) {
+            dma_unmap_single(
+                &pdev->dev,
+                tx_buffer->dma,
+                tx_buffer->len,
+                DMA_TO_DEVICE
+            );
 
-			dev_kfree_skb_any(tx_buffer->skb);
+            dev_kfree_skb_any(tx_buffer->skb);
 
-			tx_buffer->skb = NULL;
-			tx_buffer->dma = 0;
-			tx_buffer->len = 0;
-		}
+            tx_buffer->skb = NULL;
+            tx_buffer->dma = 0;
+            tx_buffer->len = 0;
+        }
 
-		tx_desc->olinfo_status = 0;
+        /*
+         * Clear software-visible descriptor state
+         */
+        tx_desc->buffer_addr = 0;
+        tx_desc->cmd_type_len = 0;
+        tx_desc->olinfo_status = 0;
 
-		tx_ring->next_to_clean++;
+        tx_ring->next_to_clean++;
 
-		if (tx_ring->next_to_clean == tx_ring->count)
-			tx_ring->next_to_clean = 0;
-	}
+        if (tx_ring->next_to_clean == tx_ring->count)
+            tx_ring->next_to_clean = 0;
 
-	if (netif_queue_stopped(adapter->netdev))
-		netif_wake_queue(adapter->netdev);
+        cleaned = true;
+    }
+
+    /*
+     * Wake the queue only if we actually freed descriptors.
+     */
+    if (cleaned && netif_queue_stopped(netdev) && !i210_tx_ring_full(tx_ring)) {
+        netif_wake_queue(netdev);
+    }
 }
 
 
@@ -1197,15 +1224,6 @@ irqreturn_t i210_interrupt(int irq, void *data)
 
     if (!eicr)
         return IRQ_NONE;
-
-    pr_info(DRV_NAME
-		": IRQ %d: EICR=0x%08x EIMS=0x%08x RDH=%u RDT=%u\n",
-		irq,
-		eicr,
-		readl(hw + I210_EIMS),
-		readl(hw + I210_RDH(0)),
-		readl(hw + I210_RDT(0))
-	);
 
     /*
      * Disable RX/TX queue interrupts while NAPI is running
