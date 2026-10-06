@@ -228,7 +228,33 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 	u16 i;
 	u32 cmd;
 
+	pr_info(DRV_NAME
+		": TX REG: TCTL=0x%08x TXDCTL=0x%08x "
+		"TDH=%u TDT=%u EIMS=0x%08x EICR=0x%08x\n",
+		readl(adapter->hw.hw_addr + I210_TCTL),
+		readl(adapter->hw.hw_addr + I210_TXDCTL(0)),
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)),
+		readl(adapter->hw.hw_addr + I210_EIMS),
+		readl(adapter->hw.hw_addr + I210_EICR));
+
+	pr_info(DRV_NAME
+		": TX ENTER: ntu=%u ntc=%u full=%d TDH=%u TDT=%u\n",
+		tx_ring->next_to_use,
+		tx_ring->next_to_clean,
+		i210_tx_ring_full(tx_ring),
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)));
+
 	if (i210_tx_ring_full(tx_ring)) {
+		pr_err(DRV_NAME
+			": TX RING FULL: "
+			"ntu=%u ntc=%u TDH=%u TDT=%u\n",
+			tx_ring->next_to_use,
+			tx_ring->next_to_clean,
+			readl(adapter->hw.hw_addr + I210_TDH(0)),
+			readl(adapter->hw.hw_addr + I210_TDT(0)));
+
 		netif_stop_queue(netdev);
 		return NETDEV_TX_BUSY;
 	}
@@ -275,14 +301,29 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	writel(i, adapter->hw.hw_addr + I210_TDT(0));
 
-	pr_info(DRV_NAME
-		": TX XMIT: idx=%u next_to_use=%u TDH=%u TDT=%u\n",
+	pr_info(DRV_NAME,
+		": TX KICK idx=%u TDH=%u TDT=%u EICR=0x%08x EIMS=0x%08x\n",
 		i,
-		tx_ring->next_to_use,
 		readl(adapter->hw.hw_addr + I210_TDH(0)),
-		readl(adapter->hw.hw_addr + I210_TDT(0)));
+		readl(adapter->hw.hw_addr + I210_TDT(0)),
+		readl(adapter->hw.hw_addr + I210_EICR),
+		readl(adapter->hw.hw_addr + I210_EIMS));
 
 	return NETDEV_TX_OK;
+}
+
+static void i210_tx_timeout(struct net_device *netdev, unsigned int txqueue)
+{
+    struct i210_adapter *adapter = netdev_priv(netdev);
+    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+    void __iomem *hw = adapter->hw.hw_addr;
+
+    pr_err(DRV_NAME
+		": TX TIMEOUT: TDH=%u TDT=%u next_to_use=%u next_to_clean=%u\n",
+		readl(hw + I210_TDH(0)),
+		readl(hw + I210_TDT(0)),
+		tx_ring->next_to_use,
+		tx_ring->next_to_clean);
 }
 
 static void i210_get_drvinfo(struct net_device *netdev,
@@ -324,13 +365,28 @@ static int i210_clean(struct napi_struct *napi, int budget)
     pr_info(DRV_NAME ": NAPI poll done: work_done=%d\n", work_done);
 
     if (work_done < budget) {
+		pr_info(DRV_NAME
+			": NAPI complete: work_done=%d EIMS=0x%08x\n",
+			work_done,
+			readl(adapter->hw.hw_addr + I210_EIMS));
         if (napi_complete_done(napi, work_done)) {
+			pr_info(DRV_NAME
+				": NAPI COMPLETE BEFORE IRQ ENABLE: "
+				"EIMS=0x%08x EICR=0x%08x\n",
+				readl(adapter->hw.hw_addr + I210_EIMS),
+				readl(adapter->hw.hw_addr + I210_EICR));
             /*
              * No more RX work
              * Re-enable RX/TX queue interrupt
              */
             writel(I210_EICR_RXTXQ0, adapter->hw.hw_addr + I210_EIMS);
-        }
+
+			pr_info(DRV_NAME
+				": NAPI COMPLETE AFTER IRQ ENABLE: "
+				"EIMS=0x%08x EICR=0x%08x\n",
+				readl(adapter->hw.hw_addr + I210_EIMS),
+				readl(adapter->hw.hw_addr + I210_EICR));
+		}
     }
 
     return work_done;
@@ -341,6 +397,7 @@ static const struct net_device_ops i210_netdev_ops = {
 	.ndo_open			= i210_open,
 	.ndo_stop			= i210_close,
 	.ndo_start_xmit		= i210_xmit,
+	.ndo_tx_timeout 	= i210_tx_timeout,
 };
 
 

@@ -406,6 +406,12 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 	void __iomem *hw = adapter->hw.hw_addr;
 	int work_done = 0;
 
+	pr_info(DRV_NAME
+		": RX POLL: RDH=%u RDT=%u next_to_clean=%u\n",
+		readl(hw + I210_RDH(0)),
+		readl(hw + I210_RDT(0)),
+		rx_ring->next_to_clean);
+
 	while (work_done < budget) {
 		struct i210_rx_desc *rx_desc;
 		struct i210_rx_buffer *rx_buffer;
@@ -420,6 +426,11 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 		rx_buffer = &rx_ring->buffer_info[i];
 
 		status = READ_ONCE(rx_desc->status);
+		pr_info(DRV_NAME
+			": RX DESC[%u]: status=0x%02x len=%u\n",
+			i,
+			status,
+			le16_to_cpu(rx_desc->length));
 		if (!(status & I210_RXD_STAT_DD))
 			break;
 
@@ -730,8 +741,19 @@ void i210_clean_tx(struct i210_adapter *adapter)
         struct i210_tx_buffer *tx_buffer = &tx_ring->buffer_info[i];
 
         u32 status;
-
         status = le32_to_cpu(READ_ONCE(tx_desc->olinfo_status));
+		if (!(status & I210_TXD_STAT_DD)) {
+			pr_info(DRV_NAME
+				": TX NOT DONE: idx=%u ntu=%u ntc=%u "
+				"TDH=%u TDT=%u status=0x%08x\n",
+				i,
+				tx_ring->next_to_use,
+				tx_ring->next_to_clean,
+				readl(adapter->hw.hw_addr + I210_TDH(0)),
+				readl(adapter->hw.hw_addr + I210_TDT(0)),
+				status);
+			break;
+		}
 
         /*
          * Hardware has not completed this descriptor yet
@@ -779,6 +801,13 @@ void i210_clean_tx(struct i210_adapter *adapter)
 
         cleaned = true;
     }
+
+	pr_info(DRV_NAME
+		": TX CLEAN DONE: ntu=%u ntc=%u TDH=%u TDT=%u\n",
+		tx_ring->next_to_use,
+		tx_ring->next_to_clean,
+		readl(adapter->hw.hw_addr + I210_TDH(0)),
+		readl(adapter->hw.hw_addr + I210_TDT(0)));
 
     /*
      * Wake the queue only if we actually freed descriptors.
@@ -1218,22 +1247,41 @@ irqreturn_t i210_interrupt(int irq, void *data)
 {
     struct i210_adapter *adapter = data;
     void __iomem *hw = adapter->hw.hw_addr;
-    u32 eicr;
 
-    eicr = readl(hw + I210_EICR);
+    u32 icr;
+    u32 ims;
 
-    if (!eicr)
+    icr = readl(hw + I210_ICR);
+    ims = readl(hw + I210_IMS);
+
+    pr_info(DRV_NAME
+		": IRQ: ICR=0x%08x IMS=0x%08x "
+		"EICR=0x%08x EIMS=0x%08x\n",
+		icr,
+		ims,
+		readl(hw + I210_EICR),
+		readl(hw + I210_EIMS));
+
+    pr_info(DRV_NAME
+		": IRQ REG DUMP: "
+		"ICR=0x%08x "
+		"IMS=0x%08x "
+		"EICR=0x%08x "
+		"EIMS=0x%08x "
+		"IVAR=0x%08x\n",
+		readl(hw + I210_ICR),
+		readl(hw + I210_IMS),
+		readl(hw + I210_EICR),
+		readl(hw + I210_EIMS),
+		readl(hw + I210_IVAR));
+
+    if (!icr)
         return IRQ_NONE;
 
     /*
-     * Disable RX/TX queue interrupts while NAPI is running
+     * Mask interrupts while NAPI is running.
      */
-    writel(I210_EICR_RXTXQ0, hw + I210_EIMC);
-
-    /*
-     * Clear interrupt cause
-     */
-    writel(eicr, hw + I210_EICR);
+    writel(0xffffffff, hw + I210_IMC);
 
     napi_schedule(&adapter->napi);
 
@@ -1263,4 +1311,20 @@ int i210_request_irq(struct i210_adapter *adapter)
 	dev_info(&adapter->pdev->dev, "IRQ %d requested\n", adapter->irq);
 
 	return 0;
+}
+
+void i210_debug_irq_state(struct i210_adapter *adapter)
+{
+    void __iomem *hw = adapter->hw.hw_addr;
+
+    pr_info(DRV_NAME
+		": IRQ STATE: EICR=0x%08x EIMS=0x%08x EIMC=0x%08x "
+		"TDH=%u TDT=%u RDH=%u RDT=%u\n",
+		readl(hw + I210_EICR),
+		readl(hw + I210_EIMS),
+		readl(hw + I210_EIMC),
+		readl(hw + I210_TDH(0)),
+		readl(hw + I210_TDT(0)),
+		readl(hw + I210_RDH(0)),
+		readl(hw + I210_RDT(0)));
 }

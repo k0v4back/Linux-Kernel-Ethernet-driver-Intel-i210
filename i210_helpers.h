@@ -42,4 +42,6 @@ void i210_disable_interrupts(struct i210_adapter *adapter);
 irqreturn_t i210_interrupt(int irq, void *data);
 int i210_request_irq(struct i210_adapter *adapter);
 
+void i210_debug_irq_state(struct i210_adapter *adapter);
+
 #endif /* _I210_HELPERS_H_ */
