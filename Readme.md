@@ -52,40 +52,16 @@ sudo ping -I eth0 192.168.1.1
 ```
 
 
-### Indexing linux kernel and use compile commands at the project
-
-1. Clone and compile linux kernel
-
-2. Call `./scripts/clang-tools/gen_compile_commands.py`
-
-3. Write to settings.json(~/.config/Code/User/settings.json)
-```
-{
-    "clangd.arguments": [
-        "-j", "8",
-        "--compile-commands-dir=/home/k0v4_2/linux_kernel_for_vs_code",
-        "--background-index",
-        "--pch-storage=memory",
-        "--header-insertion=never"
-    ]
-}
-```
-
-4. Restart clangd
-```
-Ctrl+Shift+P -> clangd: Restart language server
-```
-
 
 ### Some functions
 
 1. After `ip link set eth0 up`
-``
+```
 eth0 -> net_device -> i210_netdev_ops -> i210_open
 ```
 
 2. After `ip link set eth0 down`
-``
+```
 eth0 -> net_device -> i210_netdev_ops -> i210_open
 ```
 
@@ -181,14 +157,83 @@ PING 10.123.45.2 (10.123.45.2) from 10.123.45.1 eth0: 56(84) bytes of data.
 ```
 
 
-1. We created the RX ring
-2. Created 64 skb
-3. DMA mapped each skb
-4. We recorded the DMA address in RX descriptors
-5. Set up RDBAL/RDBAH/RDLEN
-6. Enabled the RX queue
-7. Only after that:
-RDT = 63 and returned descriptors 0..63 iron
 
-Send ping from PC1(I210) to PC2:
-Ethernet frame -> I210 RX -> DMA → RX descriptor -> DD/EOP -> i210_clean_rx() -> skb -> netif_receive_skb() -> Linux
+### Iperf3 example
+PC1(I210):
+```
+$ sudo insmod i210_driver.ko 
+$ sudo ip link set eth0 up
+$ sudo ip addr add 10.123.45.1/24 dev eth0
+$ iperf3 -c 10.123.45.2 -t 10
+Connecting to host 10.123.45.2, port 5201
+[  5] local 10.123.45.1 port 45976 connected to 10.123.45.2 port 5201
+[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
+[  5]   0.00-1.00   sec  29.0 MBytes   243 Mbits/sec    0    134 KBytes       
+[  5]   1.00-2.04   sec  30.0 MBytes   243 Mbits/sec    0    134 KBytes       
+[  5]   2.04-3.03   sec  28.8 MBytes   243 Mbits/sec    0    134 KBytes       
+[  5]   3.03-4.04   sec  28.8 MBytes   240 Mbits/sec    0    134 KBytes       
+[  5]   4.04-5.03   sec  28.8 MBytes   243 Mbits/sec    0    134 KBytes       
+[  5]   5.03-6.01   sec  27.5 MBytes   234 Mbits/sec    0    297 KBytes       
+[  5]   6.01-7.01   sec  28.8 MBytes   243 Mbits/sec    0    355 KBytes       
+[  5]   7.01-8.04   sec  30.0 MBytes   243 Mbits/sec    0    355 KBytes       
+[  5]   8.04-9.03   sec  28.8 MBytes   243 Mbits/sec    0    355 KBytes       
+[  5]   9.03-10.02  sec  28.8 MBytes   243 Mbits/sec    0    355 KBytes       
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-10.02  sec   289 MBytes   242 Mbits/sec    0             sender
+[  5]   0.00-10.02  sec   289 MBytes   242 Mbits/sec                  receiver
+```
+
+PC2:
+```
+iperf3 -s                                                              INT 08:17:59 PM
+-----------------------------------------------------------
+Server listening on 5201 (test #1)
+-----------------------------------------------------------
+Accepted connection from 10.123.45.1, port 45962
+[  5] local 10.123.45.2 port 5201 connected to 10.123.45.1 port 45976
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-1.00   sec  28.9 MBytes   242 Mbits/sec                  
+[  5]   1.00-2.00   sec  29.0 MBytes   243 Mbits/sec                  
+[  5]   2.00-3.00   sec  29.0 MBytes   243 Mbits/sec                  
+[  5]   3.00-4.00   sec  28.5 MBytes   239 Mbits/sec                  
+[  5]   4.00-5.00   sec  29.0 MBytes   243 Mbits/sec                  
+[  5]   5.00-6.00   sec  27.9 MBytes   234 Mbits/sec                  
+[  5]   6.00-7.00   sec  29.0 MBytes   243 Mbits/sec                  
+[  5]   7.00-8.00   sec  29.0 MBytes   243 Mbits/sec                  
+[  5]   8.00-9.00   sec  29.0 MBytes   243 Mbits/sec                  
+[  5]   9.00-10.00  sec  29.0 MBytes   243 Mbits/sec                  
+[  5]  10.00-10.02  sec   768 KBytes   271 Mbits/sec                  
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-10.02  sec   289 MBytes   242 Mbits/sec                  receiver
+-----------------------------------------------------------
+Server listening on 5201 (test #2)
+-----------------------------------------------------------
+```
+
+
+
+### Indexing linux kernel and use compile commands at the project
+
+1. Clone and compile linux kernel
+
+2. Call `./scripts/clang-tools/gen_compile_commands.py`
+
+3. Write to settings.json(~/.config/Code/User/settings.json)
+```
+{
+    "clangd.arguments": [
+        "-j", "8",
+        "--compile-commands-dir=/home/k0v4_2/linux_kernel_for_vs_code",
+        "--background-index",
+        "--pch-storage=memory",
+        "--header-insertion=never"
+    ]
+}
+```
+
+4. Restart clangd
+```
+Ctrl+Shift+P -> clangd: Restart language server
+```
