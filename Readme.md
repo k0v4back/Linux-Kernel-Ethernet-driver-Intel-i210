@@ -66,6 +66,45 @@ eth0 -> net_device -> i210_netdev_ops -> i210_open
 ```
 
 
+
+### Fix the NetworkManager profile
+For eth0 set static IPv4 in the NetworkManager, it does not delete the address after a failed DHCP
+```
+sudo nmcli connection modify "Wired connection 1" \
+    ipv4.method manual \
+    ipv4.addresses 10.123.45.1/24 \
+    ipv4.gateway "" \
+    ipv4.dns "" \
+    ipv6.method link-local \
+    connection.autoconnect yes
+```
+
+Activate the profile:
+```
+sudo nmcli connection up "Wired connection 1"
+```
+
+Check result:
+```
+nmcli device status
+ip -4 addr show dev eth0
+```
+
+
+
+### Test monitoring
+Monitoring address changes:
+```
+ip -ts monitor address dev eth0
+```
+
+Interface status monitoring:
+```
+ip -ts monitor link dev eth0
+```
+
+
+
 ### Send ARP
 
 ARP operation is visible in this test, computers are directly connected via an ethernet cable
