@@ -13,7 +13,9 @@ int i210_read_nvm_word(struct i210_adapter *adapter, u16 offset, u16 *data)
 	u32 value;
 	int timeout = 1000;
 
-	/* Start NVM read */
+	/*
+	 * Start NVM read
+	 */
 	value = EERD_START | ((u32)offset << EERD_ADDR_SHIFT);
 
 	writel(value, adapter->hw.hw_addr + I210_EERD);
@@ -48,33 +50,29 @@ int i210_reset_hw(struct i210_adapter *adapter)
 	pr_info(DRV_NAME ": hardware reset started\n");
 
 	/*
-	 * Read current CTRL value.
+	 * Read current CTRL value
 	 */
 	ctrl = readl(hw + I210_CTRL);
-	pr_info(DRV_NAME ": CTRL before reset = 0x%08x\n", ctrl);
 
 	/*
-	 * Assert software reset.
+	 * Assert software reset
 	 */
 	ctrl |= I210_CTRL_RST;
 	writel(ctrl, hw + I210_CTRL);
 
 	/*
 	 * Datasheet:
-	 * wait at least 3 ms after CTRL.RST.
+	 * wait at least 3 ms after CTRL.RST
 	 */
 	msleep(3);
 
 	ctrl = readl(hw + I210_CTRL);
 	status = readl(hw + I210_STATUS);
-	pr_info(DRV_NAME ": CTRL after reset = 0x%08x\n", ctrl);
-	pr_info(DRV_NAME ": STATUS after reset = 0x%08x\n", status);
 
 	/*
-	 * Verify NVM auto-read completed.
+	 * Verify NVM auto-read completed
 	 */
 	eec = readl(hw + I210_EEC);
-	pr_info(DRV_NAME ": EEC after reset = 0x%08x\n", eec);
 
 	if (!(eec & I210_EEC_AUTO_RD)) {
 		pr_err(DRV_NAME ": NVM auto-read is not complete\n");
@@ -118,7 +116,7 @@ void i210_set_mac_address(struct i210_adapter *adapter, const u8 *mac)
 	writel(rah | I210_RAH_AV, hw + I210_RAH0);
 
 	pr_info(DRV_NAME ": RAL0 = 0x%08x\n", ral);
-	pr_info(DRV_NAME ": RAH0 = 0x%08x\n", rah | I210_RAH_AV);	
+	pr_info(DRV_NAME ": RAH0 = 0x%08lx\n", rah | I210_RAH_AV);	
 }
 
 
@@ -140,7 +138,7 @@ void i210_configure_tx(struct i210_adapter *adapter)
 	tctl |= I210_TCTL_CT;
 
 	/*
-	 * Do NOT enable TX yet.
+	 * Do NOT enable TX yet
 	 * TX ring is not initialized(will enable in future)
 	 */
 	tctl &= ~I210_TCTL_EN;
@@ -158,17 +156,17 @@ void i210_configure_rx(struct i210_adapter *adapter)
 	rctl = readl(hw + I210_RCTL);
 
     /*
-     * Enable receiver.
+     * Enable receiver
      */
     rctl |= I210_RCTL_EN;
 
     /*
-     * Accept broadcast packets.
+     * Accept broadcast packets
      */
     rctl |= I210_RCTL_BAM;
 
     /*
-     * Strip Ethernet CRC.
+     * Strip Ethernet CRC
      */
     rctl |= I210_RCTL_SECRC;
 
@@ -225,7 +223,7 @@ int i210_setup_rx_resources(struct i210_adapter *adapter)
 	BUILD_BUG_ON(sizeof(struct i210_rx_desc) != 16);
 
 	/*
-	 * Allocate and map RX buffers.
+	 * Allocate and map RX buffers
 	 */
 	for (i = 0; i < rx_ring->count; i++) {
 		struct sk_buff *skb;
@@ -355,8 +353,6 @@ void i210_free_rx_resources(struct i210_adapter *adapter)
 	struct pci_dev *pdev = adapter->pdev;
 	unsigned int i;
 
-	pr_info(DRV_NAME ": freeing RX resources\n");
-
 	if (rx_ring->buffer_info) {
 		for (i = 0; i < rx_ring->count; i++) {
 			struct i210_rx_buffer *rx_buffer = &rx_ring->buffer_info[i];
@@ -406,12 +402,6 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 	void __iomem *hw = adapter->hw.hw_addr;
 	int work_done = 0;
 
-	pr_info(DRV_NAME
-		": RX POLL: RDH=%u RDT=%u next_to_clean=%u\n",
-		readl(hw + I210_RDH(0)),
-		readl(hw + I210_RDT(0)),
-		rx_ring->next_to_clean);
-
 	while (work_done < budget) {
 		struct i210_rx_desc *rx_desc;
 		struct i210_rx_buffer *rx_buffer;
@@ -426,11 +416,6 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 		rx_buffer = &rx_ring->buffer_info[i];
 
 		status = READ_ONCE(rx_desc->status);
-		pr_info(DRV_NAME
-			": RX DESC[%u]: status=0x%02x len=%u\n",
-			i,
-			status,
-			le16_to_cpu(rx_desc->length));
 		if (!(status & I210_RXD_STAT_DD))
 			break;
 
@@ -545,7 +530,6 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 {
 	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
 	struct pci_dev *pdev = adapter->pdev;
-	size_t size;
 
 	pr_info(DRV_NAME ": setting up TX resources\n");
 
@@ -597,7 +581,7 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 	memset(tx_ring->desc, 0, tx_ring->size);
 
 	/*
-	 * Software producer/consumer indexes.
+	 * Software producer/consumer indexes
 	 */
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
@@ -662,7 +646,7 @@ int i210_configure_tx_ring(struct i210_adapter *adapter)
     pr_info(DRV_NAME ": configuring TX ring\n");
 
     /*
-     * Queue must be disabled while configuring base/length.
+     * Queue must be disabled while configuring base/length
      */
     writel(0, hw + I210_TXDCTL(0));
     writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
@@ -682,7 +666,7 @@ int i210_configure_tx_ring(struct i210_adapter *adapter)
     txdctl = I210_TXDCTL_WTHRESH;
 
     /*
-     * Enable queue.
+     * Enable queue
      */
     txdctl |= I210_TXDCTL_ENABLE;
     writel(txdctl, hw + I210_TXDCTL(0));
@@ -743,15 +727,6 @@ void i210_clean_tx(struct i210_adapter *adapter)
         u32 status;
         status = le32_to_cpu(READ_ONCE(tx_desc->olinfo_status));
 		if (!(status & I210_TXD_STAT_DD)) {
-			pr_info(DRV_NAME
-				": TX NOT DONE: idx=%u ntu=%u ntc=%u "
-				"TDH=%u TDT=%u status=0x%08x\n",
-				i,
-				tx_ring->next_to_use,
-				tx_ring->next_to_clean,
-				readl(adapter->hw.hw_addr + I210_TDH(0)),
-				readl(adapter->hw.hw_addr + I210_TDT(0)),
-				status);
 			break;
 		}
 
@@ -760,14 +735,6 @@ void i210_clean_tx(struct i210_adapter *adapter)
          */
         if (!(status & I210_TXD_STAT_DD))
             break;
-
-		pr_info(DRV_NAME
-			": TX CLEAN: idx=%u TDH=%u TDT=%u DD=1 skb=%p len=%u\n",
-			i,
-			readl(adapter->hw.hw_addr + I210_TDH(0)),
-			readl(adapter->hw.hw_addr + I210_TDT(0)),
-			tx_buffer->skb,
-			tx_buffer->len);
 
         /*
          * Descriptor is complete
@@ -802,15 +769,8 @@ void i210_clean_tx(struct i210_adapter *adapter)
         cleaned = true;
     }
 
-	pr_info(DRV_NAME
-		": TX CLEAN DONE: ntu=%u ntc=%u TDH=%u TDT=%u\n",
-		tx_ring->next_to_use,
-		tx_ring->next_to_clean,
-		readl(adapter->hw.hw_addr + I210_TDH(0)),
-		readl(adapter->hw.hw_addr + I210_TDT(0)));
-
     /*
-     * Wake the queue only if we actually freed descriptors.
+     * Wake the queue only if we actually freed descriptors
      */
     if (cleaned && netif_queue_stopped(netdev) && !i210_tx_ring_full(tx_ring)) {
         netif_wake_queue(netdev);
@@ -834,7 +794,7 @@ int i210_read_phy_reg(struct i210_adapter *adapter, u8 reg, u16 *value)
 	}
 
 	/*
-	 * PHY register read.
+	 * PHY register read
 	 */
 	mdic = I210_MDIC_OP_READ | ((u32)reg << I210_MDIC_REG_SHIFT);
 	writel(mdic, hw + I210_MDIC);
@@ -899,14 +859,16 @@ int i210_write_phy_reg(struct i210_adapter *adapter,
 	} while (--timeout);
 
 	if (!(mdic & I210_MDIC_READY)) {
-		pr_err(DRV_NAME ": PHY write timeout, reg=%u value=0x%04x\n", reg, value);
+		pr_err(DRV_NAME
+			": PHY write timeout, reg=%u value=0x%04x\n", 
+			reg, value);
 		return -ETIMEDOUT;
 	}
 
 	if (mdic & I210_MDIC_ERROR) {
 		pr_err(DRV_NAME
-		       ": PHY write error, reg=%u value=0x%04x MDIC=0x%08x\n",
-		       reg, value, mdic);
+			": PHY write error, reg=%u value=0x%04x MDIC=0x%08x\n",
+			reg, value, mdic);
 		return -EIO;
 	}
 
@@ -1014,33 +976,18 @@ int i210_get_phy_link(struct i210_adapter *adapter, bool *link)
 	u16 status2;
 	int err;
 
-	err = i210_read_phy_reg(adapter,
-		I210_PHY_STATUS,
-		&status1
-	);
+	err = i210_read_phy_reg(adapter, I210_PHY_STATUS, &status1);
 	if (err)
 		return err;
 
 	/*
-	 * BMSR link status is commonly latch-low,
-	 * so perform a second read.
+	 * BMSR link status is commonly latch-low, so perform a second read
 	 */
-	err = i210_read_phy_reg(adapter,
-		I210_PHY_STATUS,
-		&status2
-	);
+	err = i210_read_phy_reg(adapter, I210_PHY_STATUS, &status2);
 	if (err)
 		return err;
 
 	*link = !!(status2 & I210_PHY_STATUS_LINK_STATUS);
-	pr_info(DRV_NAME
-		": PHY link: "
-		"STATUS1=0x%04x "
-		"STATUS2=0x%04x "
-		"LINK=%u\n",
-		status1,
-		status2,
-		*link);
 
 	return 0;
 }
@@ -1057,17 +1004,13 @@ int i210_phy_start_autoneg(struct i210_adapter *adapter)
 	if (err)
 		return err;
 
-	pr_info(DRV_NAME
-		": PHY CTRL before autoneg = 0x%04x\n",
-		ctrl);
-
 	/*
-	 * Enable Auto-Negotiation.
+	 * Enable Auto-Negotiation
 	 */
 	ctrl |= I210_PHY_CTRL_AN_ENABLE;
 
 	/*
-	 * Restart Auto-Negotiation.
+	 * Restart Auto-Negotiation
 	 */
 	ctrl |= I210_PHY_CTRL_RESTART_AN;
 
@@ -1076,8 +1019,6 @@ int i210_phy_start_autoneg(struct i210_adapter *adapter)
 		ctrl);
 	if (err)
 		return err;
-
-	pr_info(DRV_NAME ": PHY CTRL after autoneg = 0x%04x\n", ctrl);
 
 	return 0;
 }
@@ -1118,7 +1059,7 @@ int i210_init_phy(struct i210_adapter *adapter)
 
 	/*
 	 * CTRL.SLU must be set for the MAC to recognize
-	 * the PHY link indication.
+	 * the PHY link indication
 	 */
 	ctrl = readl(adapter->hw.hw_addr + I210_CTRL);
 	ctrl |= I210_CTRL_SLU;
@@ -1126,7 +1067,7 @@ int i210_init_phy(struct i210_adapter *adapter)
 	pr_info(DRV_NAME ": MAC CTRL after SLU = 0x%08x\n", ctrl);
 
 	/*
-	 * Bring PHY out of power-down and isolate modes.
+	 * Bring PHY out of power-down and isolate modes
 	 */
 	err = i210_phy_power_up(adapter);
 	if (err) {
@@ -1135,14 +1076,14 @@ int i210_init_phy(struct i210_adapter *adapter)
 	}
 
 	/*
-	 * Dump PHY state after power-up, before autonegotiation.
+	 * Dump PHY state after power-up, before autonegotiation
 	 */
 	err = i210_dump_phy(adapter);
 	if (err)
 		return err;
 
 	/*
-	 * Start PHY auto-negotiation.
+	 * Start PHY auto-negotiation
 	 */
 	err = i210_phy_start_autoneg(adapter);
 	if (err) {
@@ -1177,32 +1118,14 @@ int i210_alloc_irq(struct i210_adapter *adapter)
 		return ret;
 	}
 
-	dev_info(&pdev->dev,
-		"IRQ allocated: vector=%d irq=%d MSI=%d MSI-X=%d\n",
-		0,
-		pci_irq_vector(pdev, 0),
-		pdev->msi_enabled,
-		pdev->msix_enabled
-	);
-
 	adapter->irq_vectors = ret;
 	adapter->irq = pci_irq_vector(pdev, 0);
 	if (adapter->irq < 0) {
-		dev_err(&pdev->dev,
-			"failed to get IRQ vector: %d\n",
-			adapter->irq);
-
 		pci_free_irq_vectors(pdev);
 		adapter->irq_vectors = 0;
 
 		return adapter->irq;
 	}
-
-	dev_info(&pdev->dev,
-		 "IRQ allocated: vector=0 irq=%d MSI=%d MSI-X=%d\n",
-		 adapter->irq,
-		 pdev->msi_enabled,
-		 pdev->msix_enabled);
 
 	return 0;
 }
@@ -1213,20 +1136,18 @@ void i210_configure_interrupts(struct i210_adapter *adapter)
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 ivar;
 
-	/* RX queue 0 -> EICR bit 0 */
-	// ivar = I210_IVAR_RX0_VALID | (0 << I210_IVAR_RX0_SHIFT);
+	/*
+	 * RX queue 0 -> EICR bit 0
+	 */
 	ivar = 0;
 	ivar |= 0 << I210_IVAR_RX0_SHIFT;
 	ivar |= I210_IVAR_RX0_VALID;
 	writel(ivar, hw + I210_IVAR);
 
-	/* Enable RX queue 0 interrupt */
+	/*
+	 * Enable RX queue 0 interrupt
+	 */
 	writel(I210_EICR_RXTXQ0, hw + I210_EIMS);
-
-	dev_info(&adapter->pdev->dev,
-		"interrupts configured: IVAR=0x%08x EIMS=0x%08x\n",
-		readl(hw + I210_IVAR),
-		readl(hw + I210_EIMS));
 }
 
 
@@ -1237,7 +1158,9 @@ void i210_disable_interrupts(struct i210_adapter *adapter)
 	writel(0xffffffff, hw + I210_EIMC);
 	writel(0xffffffff, hw + I210_IMC);
 
-	/* Clear pending causes */
+	/*
+	 * Clear pending causes
+	 */
 	readl(hw + I210_EICR);
 	readl(hw + I210_ICR);
 }
@@ -1254,32 +1177,11 @@ irqreturn_t i210_interrupt(int irq, void *data)
     icr = readl(hw + I210_ICR);
     ims = readl(hw + I210_IMS);
 
-    pr_info(DRV_NAME
-		": IRQ: ICR=0x%08x IMS=0x%08x "
-		"EICR=0x%08x EIMS=0x%08x\n",
-		icr,
-		ims,
-		readl(hw + I210_EICR),
-		readl(hw + I210_EIMS));
-
-    pr_info(DRV_NAME
-		": IRQ REG DUMP: "
-		"ICR=0x%08x "
-		"IMS=0x%08x "
-		"EICR=0x%08x "
-		"EIMS=0x%08x "
-		"IVAR=0x%08x\n",
-		readl(hw + I210_ICR),
-		readl(hw + I210_IMS),
-		readl(hw + I210_EICR),
-		readl(hw + I210_EIMS),
-		readl(hw + I210_IVAR));
-
     if (!icr)
         return IRQ_NONE;
 
     /*
-     * Mask interrupts while NAPI is running.
+     * Mask interrupts while NAPI is running
      */
     writel(0xffffffff, hw + I210_IMC);
 
@@ -1300,15 +1202,8 @@ int i210_request_irq(struct i210_adapter *adapter)
 		adapter
 	);
 
-	if (ret) {
-		dev_err(&adapter->pdev->dev,
-			"request_irq(%d) failed: %d\n",
-			adapter->irq,
-			ret);
+	if (ret)
 		return ret;
-	}
-
-	dev_info(&adapter->pdev->dev, "IRQ %d requested\n", adapter->irq);
 
 	return 0;
 }

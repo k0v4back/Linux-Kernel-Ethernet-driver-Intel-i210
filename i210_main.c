@@ -153,12 +153,9 @@ static int i210_open(struct net_device *netdev)
 	err = i210_phy_wait_link(adapter, 5000);
 	if (err) {
 		if (err == -ENOLINK) {
-			pr_info(DRV_NAME
-				": no PHY link\n");
+			pr_info(DRV_NAME ": no PHY link\n");
 		} else {
-			pr_err(DRV_NAME
-			       ": PHY link check failed: %d\n",
-			       err);
+			pr_err(DRV_NAME ": PHY link check failed: %d\n", err);
 		}
 
 		pr_info(DRV_NAME ": ===== PHY/MAC DUMP: link timeout =====\n");
@@ -210,7 +207,7 @@ static int i210_close(struct net_device *netdev)
 	}
 
 	/*
-	 * Now it is safe to release the rings and RX buffers.
+	 * Now it is safe to release the rings and RX buffers
 	 */
 	i210_free_rx_resources(adapter);
 	i210_free_tx_resources(adapter);
@@ -228,33 +225,7 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 	u16 i;
 	u32 cmd;
 
-	pr_info(DRV_NAME
-		": TX REG: TCTL=0x%08x TXDCTL=0x%08x "
-		"TDH=%u TDT=%u EIMS=0x%08x EICR=0x%08x\n",
-		readl(adapter->hw.hw_addr + I210_TCTL),
-		readl(adapter->hw.hw_addr + I210_TXDCTL(0)),
-		readl(adapter->hw.hw_addr + I210_TDH(0)),
-		readl(adapter->hw.hw_addr + I210_TDT(0)),
-		readl(adapter->hw.hw_addr + I210_EIMS),
-		readl(adapter->hw.hw_addr + I210_EICR));
-
-	pr_info(DRV_NAME
-		": TX ENTER: ntu=%u ntc=%u full=%d TDH=%u TDT=%u\n",
-		tx_ring->next_to_use,
-		tx_ring->next_to_clean,
-		i210_tx_ring_full(tx_ring),
-		readl(adapter->hw.hw_addr + I210_TDH(0)),
-		readl(adapter->hw.hw_addr + I210_TDT(0)));
-
 	if (i210_tx_ring_full(tx_ring)) {
-		pr_err(DRV_NAME
-			": TX RING FULL: "
-			"ntu=%u ntc=%u TDH=%u TDT=%u\n",
-			tx_ring->next_to_use,
-			tx_ring->next_to_clean,
-			readl(adapter->hw.hw_addr + I210_TDH(0)),
-			readl(adapter->hw.hw_addr + I210_TDT(0)));
-
 		netif_stop_queue(netdev);
 		return NETDEV_TX_BUSY;
 	}
@@ -264,11 +235,7 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 	tx_desc = &tx_ring->desc[i];
 	tx_buffer = &tx_ring->buffer_info[i];
 
-	dma = dma_map_single(&adapter->pdev->dev,
-			     skb->data,
-			     skb->len,
-			     DMA_TO_DEVICE);
-
+	dma = dma_map_single(&adapter->pdev->dev, skb->data, skb->len, DMA_TO_DEVICE);
 	if (dma_mapping_error(&adapter->pdev->dev, dma)) {
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
@@ -298,16 +265,7 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 		i = 0;
 
 	tx_ring->next_to_use = i;
-
 	writel(i, adapter->hw.hw_addr + I210_TDT(0));
-
-	pr_info(DRV_NAME,
-		": TX KICK idx=%u TDH=%u TDT=%u EICR=0x%08x EIMS=0x%08x\n",
-		i,
-		readl(adapter->hw.hw_addr + I210_TDH(0)),
-		readl(adapter->hw.hw_addr + I210_TDT(0)),
-		readl(adapter->hw.hw_addr + I210_EICR),
-		readl(adapter->hw.hw_addr + I210_EIMS));
 
 	return NETDEV_TX_OK;
 }
@@ -350,8 +308,6 @@ static int i210_clean(struct napi_struct *napi, int budget)
 
     int work_done;
 
-    pr_info(DRV_NAME ": NAPI poll: budget=%d\n", budget);
-
     /*
      * RX processing consumes the NAPI budget
      */
@@ -362,30 +318,15 @@ static int i210_clean(struct napi_struct *napi, int budget)
      */
     i210_clean_tx(adapter);
 
-    pr_info(DRV_NAME ": NAPI poll done: work_done=%d\n", work_done);
-
     if (work_done < budget) {
-		pr_info(DRV_NAME
-			": NAPI complete: work_done=%d EIMS=0x%08x\n",
-			work_done,
-			readl(adapter->hw.hw_addr + I210_EIMS));
         if (napi_complete_done(napi, work_done)) {
-			pr_info(DRV_NAME
-				": NAPI COMPLETE BEFORE IRQ ENABLE: "
-				"EIMS=0x%08x EICR=0x%08x\n",
-				readl(adapter->hw.hw_addr + I210_EIMS),
-				readl(adapter->hw.hw_addr + I210_EICR));
+			readl(adapter->hw.hw_addr + I210_EIMS);
+			readl(adapter->hw.hw_addr + I210_EICR);
             /*
              * No more RX work
              * Re-enable RX/TX queue interrupt
              */
             writel(I210_EICR_RXTXQ0, adapter->hw.hw_addr + I210_EIMS);
-
-			pr_info(DRV_NAME
-				": NAPI COMPLETE AFTER IRQ ENABLE: "
-				"EIMS=0x%08x EICR=0x%08x\n",
-				readl(adapter->hw.hw_addr + I210_EIMS),
-				readl(adapter->hw.hw_addr + I210_EICR));
 		}
     }
 
@@ -412,10 +353,10 @@ static int i210_probe(struct pci_dev *pdev,
 	u16 device_id;
 	u16 nvm_word[3];
 	u8 mac[6];
+	int i;
 
 	pr_info(DRV_NAME ": probe()\n");
-	pr_info(DRV_NAME ": PCI device %04x:%04x\n",
-		pdev->vendor, pdev->device);
+	pr_info(DRV_NAME ": PCI device %04x:%04x\n", pdev->vendor, pdev->device);
 
 	/* 1. Determine MMIO BARs */
 	bars = pci_select_bars(pdev, IORESOURCE_MEM);
@@ -467,7 +408,6 @@ static int i210_probe(struct pci_dev *pdev,
 	pci_read_config_word(pdev, PCI_DEVICE_ID, &device_id);
 	pr_info(DRV_NAME ": PCI Vendor ID = 0x%04x\n", vendor_id);
 	pr_info(DRV_NAME ": PCI Device ID = 0x%04x\n", device_id);
-	int i;
 	for (i = 0; i < 3; i++) {
 		err = i210_read_nvm_word(adapter, i, &nvm_word[i]);
 		if (err)
@@ -483,7 +423,6 @@ static int i210_probe(struct pci_dev *pdev,
 	mac[5] = nvm_word[2] >> 8;
 	eth_hw_addr_set(netdev, mac);
 	pr_info(DRV_NAME ": MAC address %pM\n", netdev->dev_addr);
-
 
 	/* 10. Configure net_device */
 	netdev->netdev_ops = &i210_netdev_ops;
@@ -501,8 +440,7 @@ static int i210_probe(struct pci_dev *pdev,
 		goto err_napi;
 	}
 
-	pr_info(DRV_NAME ": network device registered as %s\n",
-		netdev->name);
+	pr_info(DRV_NAME ": network device registered as %s\n", netdev->name);
 
 	return 0;
 
@@ -547,7 +485,7 @@ static void i210_remove(struct pci_dev *pdev)
 		pci_iounmap(pdev, adapter->hw.hw_addr);
 
 	pci_release_selected_regions(pdev,
-				     pci_select_bars(pdev, IORESOURCE_MEM));
+		pci_select_bars(pdev, IORESOURCE_MEM));
 
 	pci_clear_master(pdev);
 	pci_disable_device(pdev);
@@ -570,6 +508,7 @@ static int __init i210_init(void)
 
 	return pci_register_driver(&i210_driver);
 }
+
 
 static void __exit i210_exit(void)
 {
