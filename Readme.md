@@ -33,22 +33,7 @@ sudo insmod i210_driver.ko
 
 7. Show log
 ```
-dmesg | tail -n20
-```
-
-8. Set up interface
-```
-sudo ip link set eth0 up
-```
-
-9. Check ip route
-```
-ip route get 192.168.1.1
-```
-
-10. Through a specific interface
-```
-sudo ping -I eth0 192.168.1.1
+dmesg
 ```
 
 
