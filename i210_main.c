@@ -97,8 +97,8 @@ static void i210_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *
 {
 	struct i210_adapter *adapter = netdev_priv(netdev);
 
-	strlcpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
-	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev), sizeof(drvinfo->bus_info));
+	strncpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
+	strncpy(drvinfo->bus_info, pci_name(adapter->pdev), sizeof(drvinfo->bus_info));
 
 	pr_info(DRV_NAME ": i210_get_drvinfo()\n");
 }
@@ -205,7 +205,7 @@ static int i210_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	netdev->netdev_ops = &i210_netdev_ops;
 	netdev->ethtool_ops = &i210_ethtool_ops;
 	netdev->watchdog_timeo = 5 * HZ;
-	netif_napi_add(netdev, &adapter->napi, i210_clean, 64);
+	netif_napi_add_config(netdev, &adapter->napi, i210_clean, 64);
 	strcpy(netdev->name, "eth%d");
 
 	/* 11. Register net_device */
