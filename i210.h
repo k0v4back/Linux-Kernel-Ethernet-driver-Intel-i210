@@ -17,9 +17,9 @@ struct i210_hw {
 };
 
 struct i210_tx_desc {
-	__le64 buffer_addr; 	/* Physical address of the data */
-	__le32 cmd_type_len; 	/* Command + Type + Lenght */
-	__le32 olinfo_status; 	/* offload-info + status */
+	__le64 buffer_addr; /* Physical address of the data */
+	__le32 cmd_type_len; /* Command + Type + Lenght */
+	__le32 olinfo_status; /* offload-info + status */
 };
 
 struct i210_rx_desc {

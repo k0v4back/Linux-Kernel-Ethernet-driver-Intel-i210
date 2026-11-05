@@ -10,15 +10,13 @@
 #include "i210_helpers.h"
 #include "i210.h"
 
-static int i210_probe(struct pci_dev *pdev,
-		      const struct pci_device_id *ent);
+static int i210_probe(struct pci_dev *pdev, const struct pci_device_id *ent);
 static void i210_remove(struct pci_dev *pdev);
 static void i210_shutdown(struct pci_dev *pdev);
 
 static int i210_open(struct net_device *netdev);
 static int i210_close(struct net_device *netdev);
-static netdev_tx_t i210_xmit(struct sk_buff *skb,
-			     struct net_device *netdev);
+static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev);
 
 static int i210_clean(struct napi_struct *napi, int budget);
 
@@ -29,20 +27,20 @@ static const struct pci_device_id i210_pci_tbl[] = {
 	{
 		PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x1533),
 	},
-	{ 0, }
+	{
+		0,
+	}
 };
 
 MODULE_DEVICE_TABLE(pci, i210_pci_tbl);
 
-
 static struct pci_driver i210_driver = {
-	.name		= DRV_NAME,
-	.id_table	= i210_pci_tbl,
-	.probe		= i210_probe,
-	.remove		= i210_remove,
-	.shutdown	= i210_shutdown,
+	.name = DRV_NAME,
+	.id_table = i210_pci_tbl,
+	.probe = i210_probe,
+	.remove = i210_remove,
+	.shutdown = i210_shutdown,
 };
-
 
 static int i210_open(struct net_device *netdev)
 {
@@ -72,6 +70,9 @@ static int i210_open(struct net_device *netdev)
 		return err;
 	}
 
+	/*
+	 * Configure TX ring
+	 */
 	i210_configure_tx_buffer(adapter);
 
 	/*
@@ -84,21 +85,21 @@ static int i210_open(struct net_device *netdev)
 	}
 
 	/*
-	 * Setup RX resources
-	 */
-	err = i210_setup_rx_resources(adapter);
-	if (err) {
-		pr_err(DRV_NAME ": RX resource setup failed: %d\n", err);
-		goto err_free_tx;
-	}
-
-	/*
 	 * Configure TX ring
 	 */
 	err = i210_configure_tx_ring(adapter);
 	if (err) {
 		pr_err(DRV_NAME ": TX ring configuration failed: %d\n", err);
 		goto err_free_rx;
+	}
+
+	/*
+	 * Setup RX resources
+	 */
+	err = i210_setup_rx_resources(adapter);
+	if (err) {
+		pr_err(DRV_NAME ": RX resource setup failed: %d\n", err);
+		goto err_free_tx;
 	}
 
 	/*
@@ -138,9 +139,11 @@ static int i210_open(struct net_device *netdev)
 	if (err)
 		goto err_free_tx;
 
-	pr_info(DRV_NAME ": NAPI before enable: state=0x%lx\n", adapter->napi.state);
+	pr_info(DRV_NAME ": NAPI before enable: state=0x%lx\n",
+		adapter->napi.state);
 	napi_enable(&adapter->napi);
-	pr_info(DRV_NAME ": NAPI after enable: state=0x%lx\n", adapter->napi.state);
+	pr_info(DRV_NAME ": NAPI after enable: state=0x%lx\n",
+		adapter->napi.state);
 
 	i210_configure_interrupts(adapter);
 
@@ -200,9 +203,7 @@ static int i210_close(struct net_device *netdev)
 
 	if (adapter->irq_vectors) {
 		free_irq(adapter->irq, adapter);
-
 		pci_free_irq_vectors(adapter->pdev);
-
 		adapter->irq_vectors = 0;
 	}
 
@@ -235,7 +236,8 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 	tx_desc = &tx_ring->desc[i];
 	tx_buffer = &tx_ring->buffer_info[i];
 
-	dma = dma_map_single(&adapter->pdev->dev, skb->data, skb->len, DMA_TO_DEVICE);
+	dma = dma_map_single(&adapter->pdev->dev, skb->data, skb->len,
+			     DMA_TO_DEVICE);
 	if (dma_mapping_error(&adapter->pdev->dev, dma)) {
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
@@ -250,19 +252,20 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 	cmd = skb->len;
 	cmd |= I210_TXD_DTYP_ADV << I210_TXD_DTYP_SHIFT;
 
-	cmd |= (I210_TXD_CMD_EOP |
-		I210_TXD_CMD_IFCS |
-		I210_TXD_CMD_RS |
-		I210_TXD_CMD_DEXT) << I210_TXD_CMD_SHIFT;
+	cmd |= (I210_TXD_CMD_EOP | I210_TXD_CMD_IFCS | I210_TXD_CMD_RS |
+		I210_TXD_CMD_DEXT)
+	       << I210_TXD_CMD_SHIFT;
 
 	tx_desc->cmd_type_len = cpu_to_le32(cmd);
-	tx_desc->olinfo_status = cpu_to_le32((u32)skb->len << I210_TXD_PAYLEN_SHIFT);
+	tx_desc->olinfo_status =
+		cpu_to_le32((u32)skb->len << I210_TXD_PAYLEN_SHIFT);
 
 	dma_wmb();
 
 	i++;
-	if (i == tx_ring->count)
+	if (i == tx_ring->count) {
 		i = 0;
+	}
 
 	tx_ring->next_to_use = i;
 	writel(i, adapter->hw.hw_addr + I210_TDT(0));
@@ -272,16 +275,14 @@ static netdev_tx_t i210_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 static void i210_tx_timeout(struct net_device *netdev, unsigned int txqueue)
 {
-    struct i210_adapter *adapter = netdev_priv(netdev);
-    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
-    void __iomem *hw = adapter->hw.hw_addr;
+	struct i210_adapter *adapter = netdev_priv(netdev);
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	void __iomem *hw = adapter->hw.hw_addr;
 
-    pr_err(DRV_NAME
-		": TX TIMEOUT: TDH=%u TDT=%u next_to_use=%u next_to_clean=%u\n",
-		readl(hw + I210_TDH(0)),
-		readl(hw + I210_TDT(0)),
-		tx_ring->next_to_use,
-		tx_ring->next_to_clean);
+	pr_err(DRV_NAME
+	       ": TX TIMEOUT: TDH=%u TDT=%u next_to_use=%u next_to_clean=%u\n",
+	       readl(hw + I210_TDH(0)), readl(hw + I210_TDT(0)),
+	       tx_ring->next_to_use, tx_ring->next_to_clean);
 }
 
 static void i210_get_drvinfo(struct net_device *netdev,
@@ -289,8 +290,9 @@ static void i210_get_drvinfo(struct net_device *netdev,
 {
 	struct i210_adapter *adapter = netdev_priv(netdev);
 
-	strlcpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
-	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev), sizeof(drvinfo->bus_info));
+	strncpy(drvinfo->driver, DRV_NAME, sizeof(drvinfo->driver));
+	strncpy(drvinfo->bus_info, pci_name(adapter->pdev),
+		sizeof(drvinfo->bus_info));
 
 	// pr_info(DRV_NAME ": i210_get_drvinfo()\n");
 }
@@ -300,50 +302,47 @@ static const struct ethtool_ops i210_ethtool_ops = {
 	.get_drvinfo = i210_get_drvinfo,
 };
 
-
 static int i210_clean(struct napi_struct *napi, int budget)
 {
-    struct i210_adapter *adapter =
-        container_of(napi, struct i210_adapter, napi);
+	struct i210_adapter *adapter =
+		container_of(napi, struct i210_adapter, napi);
 
-    int work_done;
+	int work_done;
 
-    /*
+	/*
      * RX processing consumes the NAPI budget
      */
-    work_done = i210_clean_rx(adapter, budget);
+	work_done = i210_clean_rx(adapter, budget);
 
-    /*
+	/*
      * TX cleanup does not consume the RX budget
      */
-    i210_clean_tx(adapter);
+	i210_clean_tx(adapter);
 
-    if (work_done < budget) {
-        if (napi_complete_done(napi, work_done)) {
+	if (work_done < budget) {
+		if (napi_complete_done(napi, work_done)) {
 			readl(adapter->hw.hw_addr + I210_EIMS);
 			readl(adapter->hw.hw_addr + I210_EICR);
-            /*
+			/*
              * No more RX work
              * Re-enable RX/TX queue interrupt
              */
-            writel(I210_EICR_RXTXQ0, adapter->hw.hw_addr + I210_EIMS);
+			writel(I210_EICR_RXTXQ0,
+			       adapter->hw.hw_addr + I210_EIMS);
 		}
-    }
+	}
 
-    return work_done;
+	return work_done;
 }
 
-
 static const struct net_device_ops i210_netdev_ops = {
-	.ndo_open			= i210_open,
-	.ndo_stop			= i210_close,
-	.ndo_start_xmit		= i210_xmit,
-	.ndo_tx_timeout 	= i210_tx_timeout,
+	.ndo_open = i210_open,
+	.ndo_stop = i210_close,
+	.ndo_start_xmit = i210_xmit,
+	.ndo_tx_timeout = i210_tx_timeout,
 };
 
-
-static int i210_probe(struct pci_dev *pdev,
-		      const struct pci_device_id *ent)
+static int i210_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev;
 	struct i210_adapter *adapter;
@@ -356,7 +355,8 @@ static int i210_probe(struct pci_dev *pdev,
 	int i;
 
 	pr_info(DRV_NAME ": probe()\n");
-	pr_info(DRV_NAME ": PCI device %04x:%04x\n", pdev->vendor, pdev->device);
+	pr_info(DRV_NAME ": PCI device %04x:%04x\n", pdev->vendor,
+		pdev->device);
 
 	/* 1. Determine MMIO BARs */
 	bars = pci_select_bars(pdev, IORESOURCE_MEM);
@@ -413,7 +413,8 @@ static int i210_probe(struct pci_dev *pdev,
 		if (err)
 			goto err_napi;
 
-		pr_info(DRV_NAME ": NVM word[0x%02x] = 0x%04x\n", i, nvm_word[i]);
+		pr_info(DRV_NAME ": NVM word[0x%02x] = 0x%04x\n", i,
+			nvm_word[i]);
 	}
 	mac[0] = nvm_word[0] & 0xff;
 	mac[1] = nvm_word[0] >> 8;
@@ -429,7 +430,7 @@ static int i210_probe(struct pci_dev *pdev,
 	netdev->ethtool_ops = &i210_ethtool_ops;
 	netdev->watchdog_timeo = 5 * HZ;
 	pr_info(DRV_NAME ": adding NAPI\n");
-	netif_napi_add(netdev, &adapter->napi, i210_clean, 64);
+	netif_napi_add(netdev, &adapter->napi, i210_clean);
 	pr_info(DRV_NAME ": NAPI added\n");
 	strcpy(netdev->name, "eth%d");
 
@@ -443,7 +444,6 @@ static int i210_probe(struct pci_dev *pdev,
 	pr_info(DRV_NAME ": network device registered as %s\n", netdev->name);
 
 	return 0;
-
 
 err_napi:
 	netif_napi_del(&adapter->napi);
@@ -461,7 +461,6 @@ err_disable_device:
 
 	return err;
 }
-
 
 static void i210_remove(struct pci_dev *pdev)
 {
@@ -485,7 +484,7 @@ static void i210_remove(struct pci_dev *pdev)
 		pci_iounmap(pdev, adapter->hw.hw_addr);
 
 	pci_release_selected_regions(pdev,
-		pci_select_bars(pdev, IORESOURCE_MEM));
+				     pci_select_bars(pdev, IORESOURCE_MEM));
 
 	pci_clear_master(pdev);
 	pci_disable_device(pdev);
@@ -495,12 +494,10 @@ static void i210_remove(struct pci_dev *pdev)
 	free_netdev(netdev);
 }
 
-
 static void i210_shutdown(struct pci_dev *pdev)
 {
 	pr_info(DRV_NAME ": shutdown()\n");
 }
-
 
 static int __init i210_init(void)
 {
@@ -509,14 +506,12 @@ static int __init i210_init(void)
 	return pci_register_driver(&i210_driver);
 }
 
-
 static void __exit i210_exit(void)
 {
 	pr_info(DRV_NAME ": exit()\n");
 
 	pci_unregister_driver(&i210_driver);
 }
-
 
 module_init(i210_init);
 module_exit(i210_exit);

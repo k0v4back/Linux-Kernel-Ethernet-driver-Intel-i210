@@ -36,7 +36,6 @@ int i210_read_nvm_word(struct i210_adapter *adapter, u16 offset, u16 *data)
 	return -ETIMEDOUT;
 }
 
-
 /*
  * 4.3.1 Software Reset (RST)
  */
@@ -66,14 +65,19 @@ int i210_reset_hw(struct i210_adapter *adapter)
 	 */
 	msleep(3);
 
-	ctrl = readl(hw + I210_CTRL);
+	/*
+	 *  Verify reset completed
+	 */
 	status = readl(hw + I210_STATUS);
+	if (!(status & I210_STATUS_PF_RST_DONE)) {
+		pr_err(DRV_NAME ": Reset is not complete\n");
+		return -ETIMEDOUT;
+	}
 
 	/*
 	 * Verify NVM auto-read completed
 	 */
 	eec = readl(hw + I210_EEC);
-
 	if (!(eec & I210_EEC_AUTO_RD)) {
 		pr_err(DRV_NAME ": NVM auto-read is not complete\n");
 		return -EIO;
@@ -83,7 +87,6 @@ int i210_reset_hw(struct i210_adapter *adapter)
 
 	return 0;
 }
-
 
 /*
  * 6.2.1 Ethernet Address (Words 0x00-0x02)
@@ -116,16 +119,17 @@ void i210_set_mac_address(struct i210_adapter *adapter, const u8 *mac)
 	writel(rah | I210_RAH_AV, hw + I210_RAH0);
 
 	pr_info(DRV_NAME ": RAL0 = 0x%08x\n", ral);
-	pr_info(DRV_NAME ": RAH0 = 0x%08lx\n", rah | I210_RAH_AV);	
+	pr_info(DRV_NAME ": RAH0 = 0x%08lx\n", rah | I210_RAH_AV);
 }
-
 
 void i210_configure_tx(struct i210_adapter *adapter)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 tctl;
 
-	/* It's some about half-duplex collision behavior */
+	/*
+	 * It's some about half-duplex collision behavior
+	 */
 	tctl = readl(hw + I210_TCTL);
 	tctl &= ~I210_TCTL_CT_MASK;
 
@@ -147,7 +151,6 @@ void i210_configure_tx(struct i210_adapter *adapter)
 	pr_info(DRV_NAME ": TCTL = 0x%08x\n", tctl);
 }
 
-
 void i210_configure_rx(struct i210_adapter *adapter)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
@@ -155,25 +158,24 @@ void i210_configure_rx(struct i210_adapter *adapter)
 
 	rctl = readl(hw + I210_RCTL);
 
-    /*
+	/*
      * Enable receiver
      */
-    rctl |= I210_RCTL_EN;
+	rctl |= I210_RCTL_EN;
 
-    /*
+	/*
      * Accept broadcast packets
      */
-    rctl |= I210_RCTL_BAM;
+	rctl |= I210_RCTL_BAM;
 
-    /*
+	/*
      * Strip Ethernet CRC
      */
-    rctl |= I210_RCTL_SECRC;
+	rctl |= I210_RCTL_SECRC;
 
 	writel(rctl, hw + I210_RCTL);
 	pr_info(DRV_NAME ": RCTL = 0x%08x\n", rctl);
 }
-
 
 int i210_setup_rx_resources(struct i210_adapter *adapter)
 {
@@ -192,22 +194,15 @@ int i210_setup_rx_resources(struct i210_adapter *adapter)
 	}
 
 	rx_ring->buffer_info = kcalloc(
-		rx_ring->count,
-		sizeof(*rx_ring->buffer_info),
-		GFP_KERNEL
-	);
+		rx_ring->count, sizeof(*rx_ring->buffer_info), GFP_KERNEL);
 
 	if (!rx_ring->buffer_info) {
 		pr_err(DRV_NAME ": failed to allocate RX buffer info\n");
 		return -ENOMEM;
 	}
 
-	rx_ring->desc = dma_alloc_coherent(
-		&pdev->dev,
-		rx_ring->size,
-		&rx_ring->dma,
-		GFP_KERNEL
-	);
+	rx_ring->desc = dma_alloc_coherent(&pdev->dev, rx_ring->size,
+					   &rx_ring->dma, GFP_KERNEL);
 
 	if (!rx_ring->desc) {
 		pr_err(DRV_NAME ": failed to allocate RX descriptor ring\n");
@@ -235,12 +230,8 @@ int i210_setup_rx_resources(struct i210_adapter *adapter)
 			goto err_free_buffers;
 		}
 
-		dma = dma_map_single(
-			&pdev->dev,
-			skb->data,
-			I210_RX_BUFFER_SIZE,
-			DMA_FROM_DEVICE
-		);
+		dma = dma_map_single(&pdev->dev, skb->data, I210_RX_BUFFER_SIZE,
+				     DMA_FROM_DEVICE);
 
 		if (dma_mapping_error(&pdev->dev, dma)) {
 			pr_err(DRV_NAME ": failed to DMA map RX skb[%u]\n", i);
@@ -256,7 +247,8 @@ int i210_setup_rx_resources(struct i210_adapter *adapter)
 
 	pr_info(DRV_NAME ": RX ring allocated\n");
 	pr_info(DRV_NAME ": descriptors      = %u\n", rx_ring->count);
-	pr_info(DRV_NAME ": descriptor size  = %zu\n", sizeof(struct i210_rx_desc));
+	pr_info(DRV_NAME ": descriptor size  = %zu\n",
+		sizeof(struct i210_rx_desc));
 	pr_info(DRV_NAME ": ring size        = %u bytes\n", rx_ring->size);
 	pr_info(DRV_NAME ": CPU address      = %px\n", rx_ring->desc);
 	pr_info(DRV_NAME ": DMA address      = %pad\n", &rx_ring->dma);
@@ -272,12 +264,8 @@ err_free_buffers:
 		rx_buffer = &rx_ring->buffer_info[i];
 
 		if (rx_buffer->skb) {
-			dma_unmap_single(
-				&pdev->dev,
-				rx_buffer->dma,
-				I210_RX_BUFFER_SIZE,
-				DMA_FROM_DEVICE
-			);
+			dma_unmap_single(&pdev->dev, rx_buffer->dma,
+					 I210_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
 
 			dev_kfree_skb_any(rx_buffer->skb);
 
@@ -286,12 +274,8 @@ err_free_buffers:
 		}
 	}
 
-	dma_free_coherent(
-		&pdev->dev,
-		rx_ring->size,
-		rx_ring->desc,
-		rx_ring->dma
-	);
+	dma_free_coherent(&pdev->dev, rx_ring->size, rx_ring->desc,
+			  rx_ring->dma);
 
 	rx_ring->desc = NULL;
 	rx_ring->dma = 0;
@@ -302,7 +286,6 @@ err_free_buffers:
 	return -ENOMEM;
 }
 
-
 int i210_configure_rx_ring(struct i210_adapter *adapter)
 {
 	struct i210_rx_ring *rx_ring = &adapter->rx_ring;
@@ -310,7 +293,7 @@ int i210_configure_rx_ring(struct i210_adapter *adapter)
 	u32 rxdctl;
 	int timeout = 1000;
 
-	writel(lower_32_bits(rx_ring->dma),hw + I210_RDBAL(0));
+	writel(lower_32_bits(rx_ring->dma), hw + I210_RDBAL(0));
 	writel(upper_32_bits(rx_ring->dma), hw + I210_RDBAH(0));
 	writel(rx_ring->size, hw + I210_RDLEN(0));
 
@@ -355,17 +338,14 @@ void i210_free_rx_resources(struct i210_adapter *adapter)
 
 	if (rx_ring->buffer_info) {
 		for (i = 0; i < rx_ring->count; i++) {
-			struct i210_rx_buffer *rx_buffer = &rx_ring->buffer_info[i];
+			struct i210_rx_buffer *rx_buffer =
+				&rx_ring->buffer_info[i];
 
 			if (!rx_buffer->skb)
 				continue;
 
-			dma_unmap_single(
-				&pdev->dev,
-				rx_buffer->dma,
-				I210_RX_BUFFER_SIZE,
-				DMA_FROM_DEVICE
-			);
+			dma_unmap_single(&pdev->dev, rx_buffer->dma,
+					 I210_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
 
 			dev_kfree_skb_any(rx_buffer->skb);
 
@@ -375,12 +355,8 @@ void i210_free_rx_resources(struct i210_adapter *adapter)
 	}
 
 	if (rx_ring->desc) {
-		dma_free_coherent(
-			&pdev->dev,
-			rx_ring->size,
-			rx_ring->desc,
-			rx_ring->dma
-		);
+		dma_free_coherent(&pdev->dev, rx_ring->size, rx_ring->desc,
+				  rx_ring->dma);
 
 		rx_ring->desc = NULL;
 		rx_ring->dma = 0;
@@ -393,7 +369,6 @@ void i210_free_rx_resources(struct i210_adapter *adapter)
 	rx_ring->size = 0;
 	rx_ring->next_to_clean = 0;
 }
-
 
 int i210_clean_rx(struct i210_adapter *adapter, int budget)
 {
@@ -432,12 +407,8 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 		if (!(status & I210_RXD_STAT_EOP)) {
 			pr_err(DRV_NAME ": RX desc[%u] is not EOP\n", i);
 
-			dma_unmap_single(
-				&pdev->dev,
-				rx_buffer->dma,
-				I210_RX_BUFFER_SIZE,
-				DMA_FROM_DEVICE
-			);
+			dma_unmap_single(&pdev->dev, rx_buffer->dma,
+					 I210_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
 
 			rx_buffer->skb = NULL;
 			rx_buffer->dma = 0;
@@ -447,12 +418,8 @@ int i210_clean_rx(struct i210_adapter *adapter, int budget)
 			goto refill;
 		}
 
-		dma_unmap_single(
-			&pdev->dev,
-			rx_buffer->dma,
-			I210_RX_BUFFER_SIZE,
-			DMA_FROM_DEVICE
-		);
+		dma_unmap_single(&pdev->dev, rx_buffer->dma,
+				 I210_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
 
 		rx_buffer->skb = NULL;
 		rx_buffer->dma = 0;
@@ -497,12 +464,8 @@ int i210_alloc_rx_buffer(struct i210_adapter *adapter, u16 i)
 	if (!skb)
 		return -ENOMEM;
 
-	dma = dma_map_single(
-		&adapter->pdev->dev,
-		skb->data,
-		I210_RX_BUFFER_SIZE,
-		DMA_FROM_DEVICE
-	);
+	dma = dma_map_single(&adapter->pdev->dev, skb->data,
+			     I210_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
 
 	if (dma_mapping_error(&adapter->pdev->dev, dma)) {
 		dev_kfree_skb_any(skb);
@@ -519,7 +482,6 @@ int i210_alloc_rx_buffer(struct i210_adapter *adapter, u16 i)
 
 	return 0;
 }
-
 
 /*
  *  i210_setup_tx_resources - allocate Tx resources (Descriptors)
@@ -550,10 +512,7 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 	 * This is CPU-only memory, NIC never see it
 	 */
 	tx_ring->buffer_info = kcalloc(
-		tx_ring->count, 
-		sizeof(*tx_ring->buffer_info), 
-		GFP_KERNEL
-	);
+		tx_ring->count, sizeof(*tx_ring->buffer_info), GFP_KERNEL);
 	if (!tx_ring->buffer_info) {
 		pr_err(DRV_NAME ": failed to allocate TX buffer info\n");
 		return -ENOMEM;
@@ -565,12 +524,8 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 	 * tx_ring->desc: CPU virtual address
 	 * tx_ring->dma: DMA address visible for I210
 	 */
-	tx_ring->desc = dma_alloc_coherent(
-		&pdev->dev,
-		tx_ring->size,
-		&tx_ring->dma,
-		GFP_KERNEL
-	);
+	tx_ring->desc = dma_alloc_coherent(&pdev->dev, tx_ring->size,
+					   &tx_ring->dma, GFP_KERNEL);
 	if (!tx_ring->desc) {
 		pr_err(DRV_NAME ": failed to allocate TX descriptor ring\n");
 		kfree(tx_ring->buffer_info);
@@ -588,7 +543,8 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 
 	pr_info(DRV_NAME ": TX ring allocated\n");
 	pr_info(DRV_NAME ": descriptors      = %u\n", tx_ring->count);
-	pr_info(DRV_NAME ": descriptor size  = %zu\n", sizeof(struct i210_tx_desc));
+	pr_info(DRV_NAME ": descriptor size  = %zu\n",
+		sizeof(struct i210_tx_desc));
 	pr_info(DRV_NAME ": ring size        = %u bytes\n", tx_ring->size);
 	pr_info(DRV_NAME ": CPU address      = %px\n", tx_ring->desc);
 	pr_info(DRV_NAME ": DMA address      = %pad\n", &tx_ring->dma);
@@ -597,7 +553,6 @@ int i210_setup_tx_resources(struct i210_adapter *adapter)
 
 	return 0;
 }
-
 
 /*
  *  i210_free_tx_resources - Free Tx Resources per Queue
@@ -616,12 +571,8 @@ void i210_free_tx_resources(struct i210_adapter *adapter)
 	pr_info(DRV_NAME ": freeing TX resources\n");
 
 	if (tx_ring->desc) {
-		dma_free_coherent(
-			&pdev->dev,
-			tx_ring->size,
-			tx_ring->desc,
-			tx_ring->dma
-		);
+		dma_free_coherent(&pdev->dev, tx_ring->size, tx_ring->desc,
+				  tx_ring->dma);
 		tx_ring->desc = NULL;
 		tx_ring->dma = 0;
 	}
@@ -635,70 +586,67 @@ void i210_free_tx_resources(struct i210_adapter *adapter)
 	tx_ring->next_to_clean = 0;
 }
 
-
 int i210_configure_tx_ring(struct i210_adapter *adapter)
 {
-    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
-    void __iomem *hw = adapter->hw.hw_addr;
-    u32 txdctl;
-    int timeout = 1000;
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	void __iomem *hw = adapter->hw.hw_addr;
+	u32 txdctl;
+	int timeout = 1000;
 
-    pr_info(DRV_NAME ": configuring TX ring\n");
+	pr_info(DRV_NAME ": configuring TX ring\n");
 
-    /*
+	/*
      * Queue must be disabled while configuring base/length
      */
-    writel(0, hw + I210_TXDCTL(0));
-    writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
-    writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
-    writel(tx_ring->size, hw + I210_TDLEN(0));
+	writel(0, hw + I210_TXDCTL(0));
+	writel(lower_32_bits(tx_ring->dma), hw + I210_TDBAL(0));
+	writel(upper_32_bits(tx_ring->dma), hw + I210_TDBAH(0));
+	writel(tx_ring->size, hw + I210_TDLEN(0));
 
-    writel(0, hw + I210_TDH(0));
-    writel(0, hw + I210_TDT(0));
+	writel(0, hw + I210_TDH(0));
+	writel(0, hw + I210_TDT(0));
 
-    /*
+	/*
      * Intel recommended write-back policy:
      *
      * WTHRESH = 1
      * PTHRESH = 0
      * HTHRESH = 0
      */
-    txdctl = I210_TXDCTL_WTHRESH;
+	txdctl = I210_TXDCTL_WTHRESH;
 
-    /*
+	/*
      * Enable queue
      */
-    txdctl |= I210_TXDCTL_ENABLE;
-    writel(txdctl, hw + I210_TXDCTL(0));
-    do {
-        txdctl = readl(hw + I210_TXDCTL(0));
-        if (txdctl & I210_TXDCTL_ENABLE)
-            break;
-        udelay(1);
-    } while (--timeout);
+	txdctl |= I210_TXDCTL_ENABLE;
+	writel(txdctl, hw + I210_TXDCTL(0));
+	do {
+		txdctl = readl(hw + I210_TXDCTL(0));
+		if (txdctl & I210_TXDCTL_ENABLE)
+			break;
+		udelay(1);
+	} while (--timeout);
 
-    if (!(txdctl & I210_TXDCTL_ENABLE)) {
-        pr_err(DRV_NAME ": TX queue failed to enable\n");
-        return -ETIMEDOUT;
-    }
+	if (!(txdctl & I210_TXDCTL_ENABLE)) {
+		pr_err(DRV_NAME ": TX queue failed to enable\n");
+		return -ETIMEDOUT;
+	}
 
-    pr_info(DRV_NAME ": TXDCTL = 0x%08x\n", txdctl);
+	pr_info(DRV_NAME ": TXDCTL = 0x%08x\n", txdctl);
 
-    return 0;
+	return 0;
 }
-
 
 void i210_enable_tx(struct i210_adapter *adapter)
 {
-    void __iomem *hw = adapter->hw.hw_addr;
-    u32 tctl;
+	void __iomem *hw = adapter->hw.hw_addr;
+	u32 tctl;
 
-    tctl = readl(hw + I210_TCTL);
-    tctl |= I210_TCTL_EN;
-    writel(tctl, hw + I210_TCTL);
-    pr_info(DRV_NAME ": TCTL = 0x%08x\n", readl(hw + I210_TCTL));
+	tctl = readl(hw + I210_TCTL);
+	tctl |= I210_TCTL_EN;
+	writel(tctl, hw + I210_TCTL);
+	pr_info(DRV_NAME ": TCTL = 0x%08x\n", readl(hw + I210_TCTL));
 }
-
 
 bool i210_tx_ring_full(struct i210_tx_ring *tx_ring)
 {
@@ -710,73 +658,68 @@ bool i210_tx_ring_full(struct i210_tx_ring *tx_ring)
 	return next == tx_ring->next_to_clean;
 }
 
-
 void i210_clean_tx(struct i210_adapter *adapter)
 {
-    struct i210_tx_ring *tx_ring = &adapter->tx_ring;
-    struct pci_dev *pdev = adapter->pdev;
-    struct net_device *netdev = adapter->netdev;
+	struct i210_tx_ring *tx_ring = &adapter->tx_ring;
+	struct pci_dev *pdev = adapter->pdev;
+	struct net_device *netdev = adapter->netdev;
 
-    bool cleaned = false;
+	bool cleaned = false;
 
-    while (tx_ring->next_to_clean != tx_ring->next_to_use) {
-        u16 i = tx_ring->next_to_clean;
-        struct i210_tx_desc *tx_desc = &tx_ring->desc[i];
-        struct i210_tx_buffer *tx_buffer = &tx_ring->buffer_info[i];
+	while (tx_ring->next_to_clean != tx_ring->next_to_use) {
+		u16 i = tx_ring->next_to_clean;
+		struct i210_tx_desc *tx_desc = &tx_ring->desc[i];
+		struct i210_tx_buffer *tx_buffer = &tx_ring->buffer_info[i];
 
-        u32 status;
-        status = le32_to_cpu(READ_ONCE(tx_desc->olinfo_status));
+		u32 status;
+		status = le32_to_cpu(READ_ONCE(tx_desc->olinfo_status));
 		if (!(status & I210_TXD_STAT_DD)) {
 			break;
 		}
 
-        /*
+		/*
          * Hardware has not completed this descriptor yet
          */
-        if (!(status & I210_TXD_STAT_DD))
-            break;
+		if (!(status & I210_TXD_STAT_DD))
+			break;
 
-        /*
+		/*
          * Descriptor is complete
          */
-        if (tx_buffer->skb) {
-            dma_unmap_single(
-                &pdev->dev,
-                tx_buffer->dma,
-                tx_buffer->len,
-                DMA_TO_DEVICE
-            );
+		if (tx_buffer->skb) {
+			dma_unmap_single(&pdev->dev, tx_buffer->dma,
+					 tx_buffer->len, DMA_TO_DEVICE);
 
-            dev_kfree_skb_any(tx_buffer->skb);
+			dev_kfree_skb_any(tx_buffer->skb);
 
-            tx_buffer->skb = NULL;
-            tx_buffer->dma = 0;
-            tx_buffer->len = 0;
-        }
+			tx_buffer->skb = NULL;
+			tx_buffer->dma = 0;
+			tx_buffer->len = 0;
+		}
 
-        /*
+		/*
          * Clear software-visible descriptor state
          */
-        tx_desc->buffer_addr = 0;
-        tx_desc->cmd_type_len = 0;
-        tx_desc->olinfo_status = 0;
+		tx_desc->buffer_addr = 0;
+		tx_desc->cmd_type_len = 0;
+		tx_desc->olinfo_status = 0;
 
-        tx_ring->next_to_clean++;
+		tx_ring->next_to_clean++;
 
-        if (tx_ring->next_to_clean == tx_ring->count)
-            tx_ring->next_to_clean = 0;
+		if (tx_ring->next_to_clean == tx_ring->count)
+			tx_ring->next_to_clean = 0;
 
-        cleaned = true;
-    }
+		cleaned = true;
+	}
 
-    /*
+	/*
      * Wake the queue only if we actually freed descriptors
      */
-    if (cleaned && netif_queue_stopped(netdev) && !i210_tx_ring_full(tx_ring)) {
-        netif_wake_queue(netdev);
-    }
+	if (cleaned && netif_queue_stopped(netdev) &&
+	    !i210_tx_ring_full(tx_ring)) {
+		netif_wake_queue(netdev);
+	}
 }
-
 
 int i210_read_phy_reg(struct i210_adapter *adapter, u8 reg, u16 *value)
 {
@@ -815,7 +758,8 @@ int i210_read_phy_reg(struct i210_adapter *adapter, u8 reg, u16 *value)
 	}
 
 	if (mdic & I210_MDIC_ERROR) {
-		pr_err(DRV_NAME ": MDIC read error, reg=%u MDIC=0x%08x\n", reg, mdic);
+		pr_err(DRV_NAME ": MDIC read error, reg=%u MDIC=0x%08x\n", reg,
+		       mdic);
 		return -EIO;
 	}
 
@@ -824,10 +768,7 @@ int i210_read_phy_reg(struct i210_adapter *adapter, u8 reg, u16 *value)
 	return 0;
 }
 
-
-int i210_write_phy_reg(struct i210_adapter *adapter,
-                       u16 reg,
-                       u16 value)
+int i210_write_phy_reg(struct i210_adapter *adapter, u16 reg, u16 value)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
 	u32 mdic;
@@ -859,36 +800,34 @@ int i210_write_phy_reg(struct i210_adapter *adapter,
 	} while (--timeout);
 
 	if (!(mdic & I210_MDIC_READY)) {
-		pr_err(DRV_NAME
-			": PHY write timeout, reg=%u value=0x%04x\n", 
-			reg, value);
+		pr_err(DRV_NAME ": PHY write timeout, reg=%u value=0x%04x\n",
+		       reg, value);
 		return -ETIMEDOUT;
 	}
 
 	if (mdic & I210_MDIC_ERROR) {
 		pr_err(DRV_NAME
-			": PHY write error, reg=%u value=0x%04x MDIC=0x%08x\n",
-			reg, value, mdic);
+		       ": PHY write error, reg=%u value=0x%04x MDIC=0x%08x\n",
+		       reg, value, mdic);
 		return -EIO;
 	}
 
 	return 0;
 }
 
-
 int i210_dump_phy(struct i210_adapter *adapter)
 {
-	static const char * const phy_reg_names[32] = {
-		[0]  = "BMCR",
-		[1]  = "BMSR",
-		[2]  = "PHYID1",
-		[3]  = "PHYID2",
-		[4]  = "ANAR",
-		[5]  = "ANLPAR",
-		[6]  = "ANER",
-		[7]  = "ANNPTR",
-		[8]  = "ANLPNP",
-		[9]  = "1000BASE-T CTRL",
+	static const char *const phy_reg_names[32] = {
+		[0] = "BMCR",
+		[1] = "BMSR",
+		[2] = "PHYID1",
+		[3] = "PHYID2",
+		[4] = "ANAR",
+		[5] = "ANLPAR",
+		[6] = "ANER",
+		[7] = "ANNPTR",
+		[8] = "ANLPNP",
+		[9] = "1000BASE-T CTRL",
 		[10] = "1000BASE-T STATUS",
 		[11] = "EXT STATUS",
 		[12] = "PHY CTRL",
@@ -923,24 +862,19 @@ int i210_dump_phy(struct i210_adapter *adapter)
 		err = i210_read_phy_reg(adapter, i, &value);
 
 		if (err) {
-			pr_err(DRV_NAME ": PHY[%02d] %-20s READ ERROR %d\n",
-			       i,
-			       phy_reg_names[i] ? phy_reg_names[i] : "",
-			       err);
+			pr_err(DRV_NAME ": PHY[%02d] %-20s READ ERROR %d\n", i,
+			       phy_reg_names[i] ? phy_reg_names[i] : "", err);
 			continue;
 		}
 
-		pr_info(DRV_NAME ": PHY[%02d] %-20s = 0x%04x\n",
-			i,
-			phy_reg_names[i] ? phy_reg_names[i] : "",
-			value);
+		pr_info(DRV_NAME ": PHY[%02d] %-20s = 0x%04x\n", i,
+			phy_reg_names[i] ? phy_reg_names[i] : "", value);
 	}
 
 	pr_info(DRV_NAME ": ============================================\n");
 
 	return 0;
 }
-
 
 int i210_phy_power_up(struct i210_adapter *adapter)
 {
@@ -969,7 +903,6 @@ int i210_phy_power_up(struct i210_adapter *adapter)
 	return 0;
 }
 
-
 int i210_get_phy_link(struct i210_adapter *adapter, bool *link)
 {
 	u16 status1;
@@ -992,15 +925,12 @@ int i210_get_phy_link(struct i210_adapter *adapter, bool *link)
 	return 0;
 }
 
-
 int i210_phy_start_autoneg(struct i210_adapter *adapter)
 {
 	u16 ctrl;
 	int err;
 
-	err = i210_read_phy_reg(adapter,
-		I210_PHY_CTRL,
-		&ctrl);
+	err = i210_read_phy_reg(adapter, I210_PHY_CTRL, &ctrl);
 	if (err)
 		return err;
 
@@ -1014,15 +944,12 @@ int i210_phy_start_autoneg(struct i210_adapter *adapter)
 	 */
 	ctrl |= I210_PHY_CTRL_RESTART_AN;
 
-	err = i210_write_phy_reg(adapter,
-		I210_PHY_CTRL,
-		ctrl);
+	err = i210_write_phy_reg(adapter, I210_PHY_CTRL, ctrl);
 	if (err)
 		return err;
 
 	return 0;
 }
-
 
 int i210_phy_wait_link(struct i210_adapter *adapter, unsigned int timeout_ms)
 {
@@ -1036,7 +963,8 @@ int i210_phy_wait_link(struct i210_adapter *adapter, unsigned int timeout_ms)
 			return err;
 
 		if (link) {
-			pr_info(DRV_NAME ": PHY link is UP after %u ms\n", elapsed);
+			pr_info(DRV_NAME ": PHY link is UP after %u ms\n",
+				elapsed);
 			return 0;
 		}
 
@@ -1048,7 +976,6 @@ int i210_phy_wait_link(struct i210_adapter *adapter, unsigned int timeout_ms)
 
 	return -ENOLINK;
 }
-
 
 int i210_init_phy(struct i210_adapter *adapter)
 {
@@ -1064,7 +991,7 @@ int i210_init_phy(struct i210_adapter *adapter)
 	ctrl = readl(adapter->hw.hw_addr + I210_CTRL);
 	ctrl |= I210_CTRL_SLU;
 	writel(ctrl, adapter->hw.hw_addr + I210_CTRL);
-	pr_info(DRV_NAME ": MAC CTRL after SLU = 0x%08x\n", ctrl);
+	// pr_info(DRV_NAME ": MAC CTRL after SLU = 0x%08x\n", ctrl);
 
 	/*
 	 * Bring PHY out of power-down and isolate modes
@@ -1087,25 +1014,24 @@ int i210_init_phy(struct i210_adapter *adapter)
 	 */
 	err = i210_phy_start_autoneg(adapter);
 	if (err) {
-		pr_err(DRV_NAME ": PHY autonegotiation start failed: %d\n", err);
+		pr_err(DRV_NAME ": PHY autonegotiation start failed: %d\n",
+		       err);
 		return err;
 	}
 
 	return 0;
 }
 
-
 void i210_configure_tx_buffer(struct i210_adapter *adapter)
 {
-    void __iomem *hw = adapter->hw.hw_addr;
+	void __iomem *hw = adapter->hw.hw_addr;
 
-    writel(I210_TXPBSIZE_DEFAULT, hw + I210_TXPBS);
-    writel(I210_DTXMXPKTSZ_DEFAULT, hw + I210_DTXMXPKTSZ);
+	writel(I210_TXPBSIZE_DEFAULT, hw + I210_TXPBS);
+	writel(I210_DTXMXPKTSZ_DEFAULT, hw + I210_DTXMXPKTSZ);
 
-    pr_info(DRV_NAME ": TXPBS=0x%08x DTXMXPKTSZ=0x%08x\n",
+	pr_info(DRV_NAME ": TXPBS=0x%08x DTXMXPKTSZ=0x%08x\n",
 		readl(hw + I210_TXPBS), readl(hw + I210_DTXMXPKTSZ));
 }
-
 
 int i210_alloc_irq(struct i210_adapter *adapter)
 {
@@ -1114,7 +1040,8 @@ int i210_alloc_irq(struct i210_adapter *adapter)
 
 	ret = pci_alloc_irq_vectors(pdev, 1, 1, PCI_IRQ_MSI);
 	if (ret < 0) {
-		dev_err(&pdev->dev, "failed to allocate MSI IRQ vector: %d\n", ret);
+		dev_err(&pdev->dev, "failed to allocate MSI IRQ vector: %d\n",
+			ret);
 		return ret;
 	}
 
@@ -1129,7 +1056,6 @@ int i210_alloc_irq(struct i210_adapter *adapter)
 
 	return 0;
 }
-
 
 void i210_configure_interrupts(struct i210_adapter *adapter)
 {
@@ -1150,7 +1076,6 @@ void i210_configure_interrupts(struct i210_adapter *adapter)
 	writel(I210_EICR_RXTXQ0, hw + I210_EIMS);
 }
 
-
 void i210_disable_interrupts(struct i210_adapter *adapter)
 {
 	void __iomem *hw = adapter->hw.hw_addr;
@@ -1165,43 +1090,34 @@ void i210_disable_interrupts(struct i210_adapter *adapter)
 	readl(hw + I210_ICR);
 }
 
-
 irqreturn_t i210_interrupt(int irq, void *data)
 {
-    struct i210_adapter *adapter = data;
-    void __iomem *hw = adapter->hw.hw_addr;
+	struct i210_adapter *adapter = data;
+	void __iomem *hw = adapter->hw.hw_addr;
 
-    u32 icr;
-    u32 ims;
+	u32 icr;
+	u32 ims;
 
-    icr = readl(hw + I210_ICR);
-    ims = readl(hw + I210_IMS);
+	icr = readl(hw + I210_ICR);
+	ims = readl(hw + I210_IMS);
+	if (!icr)
+		return IRQ_NONE;
 
-    if (!icr)
-        return IRQ_NONE;
-
-    /*
+	/*
      * Mask interrupts while NAPI is running
      */
-    writel(0xffffffff, hw + I210_IMC);
+	writel(0xffffffff, hw + I210_IMC);
 
-    napi_schedule(&adapter->napi);
+	napi_schedule(&adapter->napi);
 
-    return IRQ_HANDLED;
+	return IRQ_HANDLED;
 }
 
 int i210_request_irq(struct i210_adapter *adapter)
 {
 	int ret;
 
-	ret = request_irq(
-		adapter->irq,
-		i210_interrupt,
-		0,
-		DRV_NAME,
-		adapter
-	);
-
+	ret = request_irq(adapter->irq, i210_interrupt, 0, DRV_NAME, adapter);
 	if (ret)
 		return ret;
 
@@ -1210,16 +1126,12 @@ int i210_request_irq(struct i210_adapter *adapter)
 
 void i210_debug_irq_state(struct i210_adapter *adapter)
 {
-    void __iomem *hw = adapter->hw.hw_addr;
+	void __iomem *hw = adapter->hw.hw_addr;
 
-    pr_info(DRV_NAME
-		": IRQ STATE: EICR=0x%08x EIMS=0x%08x EIMC=0x%08x "
-		"TDH=%u TDT=%u RDH=%u RDT=%u\n",
-		readl(hw + I210_EICR),
-		readl(hw + I210_EIMS),
-		readl(hw + I210_EIMC),
-		readl(hw + I210_TDH(0)),
-		readl(hw + I210_TDT(0)),
-		readl(hw + I210_RDH(0)),
+	pr_info(DRV_NAME ": IRQ STATE: EICR=0x%08x EIMS=0x%08x EIMC=0x%08x "
+			 "TDH=%u TDT=%u RDH=%u RDT=%u\n",
+		readl(hw + I210_EICR), readl(hw + I210_EIMS),
+		readl(hw + I210_EIMC), readl(hw + I210_TDH(0)),
+		readl(hw + I210_TDT(0)), readl(hw + I210_RDH(0)),
 		readl(hw + I210_RDT(0)));
 }
