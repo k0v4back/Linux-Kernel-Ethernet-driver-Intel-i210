@@ -1,60 +1,126 @@
-### Build and Load driver
+# Intel I210 Linux Network Driver
 
-1. Clean and build
-```
+## 1. Build and Load Driver
+
+### Build
+
+Clean and build the driver:
+
+``` bash
 make clean
 make all
 ```
 
-2. Check modinfo
-```
+Check the generated module information:
+
+``` bash
 modinfo ./i210_driver.ko | grep -E 'filename|name|alias'
 ```
 
-3. Check pci devices
-```
+### Identify the PCI device
+
+List PCI devices:
+
+``` bash
 lspci -nn
 ```
 
-4. Show kernel driver which handling pci device
-```
-lspci -k
+Find the kernel driver currently handling the Intel I210 device:
+
+``` bash
+lspci -k -s 02:00.0
 ```
 
-5. Unbind kernel driver 
+Example:
+
+``` text
+02:00.0 Ethernet controller: Intel Corporation I210 Gigabit Network Connection
+    Kernel driver in use: igb
+    Kernel modules: igb
 ```
+
+### Unbind the original driver
+
+Before loading the custom driver, unbind the device from the original
+`igb` driver:
+
+``` bash
 sudo sh -c 'echo 0000:02:00.0 > /sys/bus/pci/drivers/igb/unbind'
 ```
 
-6. Load new driver
-```
-sudo insmod i210_driver.ko
-```
+### Load the custom driver
 
-7. Show log
-```
-dmesg
+``` bash
+sudo insmod ./i210_driver.ko
 ```
 
+Check kernel messages:
 
-
-### Some functions
-
-1. After `ip link set eth0 up`
-```
-eth0 -> net_device -> i210_netdev_ops -> i210_open
+``` bash
+sudo dmesg -w
 ```
 
-2. After `ip link set eth0 down`
-```
-eth0 -> net_device -> i210_netdev_ops -> i210_open
+Check whether the device is now handled by the custom driver:
+
+``` bash
+lspci -k -s 02:00.0
 ```
 
+Check the network interface:
 
-
-### Fix the NetworkManager profile
-For eth0 set static IPv4 in the NetworkManager, it does not delete the address after a failed DHCP
+``` bash
+ip link show
 ```
+
+The driver registers the network interface as `eth0`.
+
+### Unload the driver
+
+Bring the interface down and unload the module:
+
+``` bash
+sudo ip link set eth0 down
+sudo rmmod i210_driver
+```
+
+To restore the original driver:
+
+``` bash
+sudo modprobe igb
+```
+
+------------------------------------------------------------------------
+
+## 2. Network Configuration and Monitoring
+
+### Configure a static IP address
+
+For testing, a static IPv4 address can be assigned directly:
+
+``` bash
+sudo ip addr add 10.123.45.1/24 dev eth0
+```
+
+Remove the address:
+
+``` bash
+sudo ip addr del 10.123.45.1/24 dev eth0
+```
+
+Check the interface configuration:
+
+``` bash
+ip addr show dev eth0
+```
+
+### NetworkManager configuration (optional)
+
+If NetworkManager manages `eth0`, it may attempt DHCP configuration and
+repeatedly change the interface state.
+
+For testing, a static IPv4 profile can be configured:
+
+``` bash
 sudo nmcli connection modify "Wired connection 1" \
     ipv4.method manual \
     ipv4.addresses 10.123.45.1/24 \
@@ -65,190 +131,199 @@ sudo nmcli connection modify "Wired connection 1" \
 ```
 
 Activate the profile:
-```
+
+``` bash
 sudo nmcli connection up "Wired connection 1"
 ```
 
-Check result:
-```
+Check the result:
+
+``` bash
 nmcli device status
 ip -4 addr show dev eth0
 ```
 
+Replace `"Wired connection 1"` with the actual NetworkManager connection
+name if necessary.
 
+### Monitor network events
 
-### Test monitoring
-Monitoring address changes:
-```
+Monitor IP address changes:
+
+``` bash
 ip -ts monitor address dev eth0
 ```
 
-Interface status monitoring:
-```
+Monitor interface state changes:
+
+``` bash
 ip -ts monitor link dev eth0
 ```
 
+Check interface statistics:
 
-
-### Send ARP
-
-ARP operation is visible in this test, computers are directly connected via an ethernet cable
-
-PC2(local working computer):
-1. Add addr to interface
+``` bash
+ip -s link show dev eth0
 ```
+
+Check link speed and duplex mode:
+
+``` bash
+sudo ethtool eth0
+```
+
+------------------------------------------------------------------------
+
+## 3. Packet Transmission Tests
+
+The driver can be tested using two computers connected through Ethernet.
+
+-   **PC1 (Host):** A computer with a standard Linux Ethernet driver.
+-   **PC2 (I210):** A computer running the custom Intel I210 driver.
+
+The following IP configuration is used:
+
+  Device       Interface     IPv4 address
+  ------------ ------------- ------------------
+  PC1 (Host)   `enp0s31f6`   `10.123.45.2/24`
+  PC2 (I210)   `eth0`        `10.123.45.1/24`
+
+### 3.1 ARP and ICMP test
+
+First, configure the PC1 interface:
+
+``` bash
 sudo ip addr add 10.123.45.2/24 dev enp0s31f6
 ```
 
-2. Start tcpdump
-```
-sudo tcpdump -eni enp0s31f6 'arp or ether host c4:62:37:03:18:ad'
+On PC1, start `tcpdump` to capture ARP and ICMP packets:
+
+``` bash
+sudo tcpdump -ni enp0s31f6 -e -vv 'arp or icmp'
 ```
 
+On PC2, load the driver and configure the interface:
 
-PC1(compute with i210):
-1. Insmod driver
-```
-sudo insmod i210_driver.ko
-```
-
-2. Add addr to interface eth0
-```
+``` bash
+sudo insmod ./i210_driver.ko
+sudo ip link set eth0 up
 sudo ip addr add 10.123.45.1/24 dev eth0
 ```
 
-3. Ping PC2
-```
-ping -I eth0 10.123.45.2
-```
+Send ICMP Echo Requests from PC2 to PC1:
 
-
-At tcpdump PC2(request and reply):
-```
-//...
-23:30:03.506754 c4:62:37:03:18:ad > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Request who-has 10.123.45.2 tell 10.123.45.1, length 46
-23:30:03.506814 e4:b9:7a:56:48:46 > c4:62:37:03:18:ad, ethertype ARP (0x0806), length 42: Reply 10.123.45.2 is-at e4:b9:7a:56:48:46, length 28
-//...
+``` bash
+ping -I eth0 -c 10 10.123.45.2
 ```
 
+The packet capture on PC1 shows the following sequence:
 
+1.  PC2 sends an ARP Request to resolve the MAC address of
+    `10.123.45.2`.
+2.  PC1 responds with an ARP Reply.
+3.  PC2 sends an ICMP Echo Request.
+4.  PC1 responds with an ICMP Echo Reply.
 
-### Ping example
-PC2:
-```
-$ sudo ip addr add 10.123.45.2/24 dev enp0s31f6
+Example `tcpdump` output:
 
-$ ip a                                                                   INT 
-//...
-2: enp0s31f6: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000
-    link/ether e4:b9:7a:56:48:46 brd ff:ff:ff:ff:ff:ff
-    inet 10.123.45.2/24 scope global enp0s31f6
-       valid_lft forever preferred_lft forever
-//..
+``` text
+c4:62:37:03:18:ad > ff:ff:ff:ff:ff:ff,
+    ethertype ARP (0x0806):
+    Request who-has 10.123.45.2 tell 10.123.45.1
 
-$ sudo tcpdump -ni enp0s31f6 -e -vv 'arp or icmp'                            07:19:33 PM
-tcpdump: listening on enp0s31f6, link-type EN10MB (Ethernet), snapshot length 262144 bytes
-19:19:35.965185 c4:62:37:03:18:ad > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Ethernet (len 6), IPv4 (len 4), Request who-has 10.123.45.2 tell 10.123.45.1, length 46
-19:19:35.965233 e4:b9:7a:56:48:46 > c4:62:37:03:18:ad, ethertype ARP (0x0806), length 42: Ethernet (len 6), IPv4 (len 4), Reply 10.123.45.2 is-at e4:b9:7a:56:48:46, length 28
-19:19:36.988410 c4:62:37:03:18:ad > ff:ff:ff:ff:ff:ff, ethertype ARP (0x0806), length 60: Ethernet (len 6), IPv4 (len 4), Request who-has 10.123.45.2 tell 10.123.45.1, length 46
-19:19:36.988444 e4:b9:7a:56:48:46 > c4:62:37:03:18:ad, ethertype ARP (0x0806), length 42: Ethernet (len 6), IPv4 (len 4), Reply 10.123.45.2 is-at e4:b9:7a:56:48:46, length 28
-19:19:36.988949 c4:62:37:03:18:ad > e4:b9:7a:56:48:46, ethertype IPv4 (0x0800), length 98: (tos 0x0, ttl 64, id 18716, offset 0, flags [DF], proto ICMP (1), length 84)
-    10.123.45.1 > 10.123.45.2: ICMP echo request, id 5, seq 1, length 64
-19:19:36.989058 e4:b9:7a:56:48:46 > c4:62:37:03:18:ad, ethertype IPv4 (0x0800), length 98: (tos 0x0, ttl 64, id 18450, offset 0, flags [none], proto ICMP (1), length 84)
-    10.123.45.2 > 10.123.45.1: ICMP echo reply, id 5, seq 1, length 64
-19:19:36.989293 c4:62:37:03:18:ad > e4:b9:7a:56:48:46, ethertype IPv4 (0x0800), length 98: (tos 0x0, ttl 64, id 18931, offset 0, flags [DF], proto ICMP (1), length 84)
-    10.123.45.1 > 10.123.45.2: ICMP echo request, id 5, seq 2, length 64
-19:19:36.989325 e4:b9:7a:56:48:46 > c4:62:37:03:18:ad, ethertype IPv4 (0x0800), length 98: (tos 0x0, ttl 64, id 18451, offset 0, flags [none], proto ICMP (1), length 84)
-    10.123.45.2 > 10.123.45.1: ICMP echo reply, id 5, seq 2, length 64
-19:19:37.990356 c4:62:37:03:18:ad > e4:b9:7a:56:48:46, ethertype IPv4 (0x0800), length 98: (tos 0x0, ttl 64, id 18964, offset 0, flags [DF], proto ICMP (1), length 84)
+e4:b9:7a:56:48:46 > c4:62:37:03:18:ad,
+    ethertype ARP (0x0806):
+    Reply 10.123.45.2 is-at e4:b9:7a:56:48:46
+
+c4:62:37:03:18:ad > e4:b9:7a:56:48:46,
+    ethertype IPv4 (0x0800):
+    10.123.45.1 > 10.123.45.2: ICMP echo request
+
+e4:b9:7a:56:48:46 > c4:62:37:03:18:ad,
+    ethertype IPv4 (0x0800):
+    10.123.45.2 > 10.123.45.1: ICMP echo reply
 ```
 
-PC1(I210):
-```
-$ sudo insmod i210_driver.ko 
-$ sudo ip link set eth0 up
-$ sudo ip addr add 10.123.45.1/24 dev eth0
-$ ping -I eth0 -c 10 10.123.45.2
-PING 10.123.45.2 (10.123.45.2) from 10.123.45.1 eth0: 56(84) bytes of data.
-64 bytes from 10.123.45.2: icmp_seq=1 ttl=64 time=1024 ms
-64 bytes from 10.123.45.2: icmp_seq=2 ttl=64 time=0.907 ms
-64 bytes from 10.123.45.2: icmp_seq=3 ttl=64 time=1014 ms
-64 bytes from 10.123.45.2: icmp_seq=4 ttl=64 time=1024 ms
-64 bytes from 10.123.45.2: icmp_seq=5 ttl=64 time=1024 ms
-64 bytes from 10.123.45.2: icmp_seq=6 ttl=64 time=1024 ms
-64 bytes from 10.123.45.2: icmp_seq=7 ttl=64 time=1024 ms
-64 bytes from 10.123.45.2: icmp_seq=8 ttl=64 time=0.367 ms
+This test verifies ARP processing, Ethernet frame transmission and
+reception, and ICMP packet delivery through the Linux network stack.
+
+### 3.2 TCP throughput test (iperf3)
+
+`iperf3` is used to measure TCP throughput between the two computers.
+
+On PC1 (Host), start the server:
+
+``` bash
+iperf3 -s
 ```
 
+On PC2 (I210), run the client:
 
-
-### Iperf3 example
-PC1(I210):
+``` bash
+iperf3 -c 10.123.45.2 -t 10
 ```
-$ sudo insmod i210_driver.ko 
-$ sudo ip link set eth0 up
-$ sudo ip addr add 10.123.45.1/24 dev eth0
-$ iperf3 -c 10.123.45.2 -t 10
+
+Example output from PC2 (I210):
+
+``` text
 Connecting to host 10.123.45.2, port 5201
-[  5] local 10.123.45.1 port 45976 connected to 10.123.45.2 port 5201
-[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
-[  5]   0.00-1.00   sec  29.0 MBytes   243 Mbits/sec    0    134 KBytes       
-[  5]   1.00-2.04   sec  30.0 MBytes   243 Mbits/sec    0    134 KBytes       
-[  5]   2.04-3.03   sec  28.8 MBytes   243 Mbits/sec    0    134 KBytes       
-[  5]   3.03-4.04   sec  28.8 MBytes   240 Mbits/sec    0    134 KBytes       
-[  5]   4.04-5.03   sec  28.8 MBytes   243 Mbits/sec    0    134 KBytes       
-[  5]   5.03-6.01   sec  27.5 MBytes   234 Mbits/sec    0    297 KBytes       
-[  5]   6.01-7.01   sec  28.8 MBytes   243 Mbits/sec    0    355 KBytes       
-[  5]   7.01-8.04   sec  30.0 MBytes   243 Mbits/sec    0    355 KBytes       
-[  5]   8.04-9.03   sec  28.8 MBytes   243 Mbits/sec    0    355 KBytes       
-[  5]   9.03-10.02  sec  28.8 MBytes   243 Mbits/sec    0    355 KBytes       
-- - - - - - - - - - - - - - - - - - - - - - - - -
-[ ID] Interval           Transfer     Bitrate         Retr
-[  5]   0.00-10.02  sec   289 MBytes   242 Mbits/sec    0             sender
-[  5]   0.00-10.02  sec   289 MBytes   242 Mbits/sec                  receiver
-```
 
-PC2:
-```
-iperf3 -s                                                              INT 08:17:59 PM
------------------------------------------------------------
-Server listening on 5201 (test #1)
------------------------------------------------------------
-Accepted connection from 10.123.45.1, port 45962
-[  5] local 10.123.45.1 port 53120 connected to 10.123.45.2 port 5201
-[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
-[  5]   0.00-1.00   sec   114 MBytes   953 Mbits/sec    1    242 KBytes       
-[  5]   1.00-2.00   sec   112 MBytes   941 Mbits/sec    0    256 KBytes       
-[  5]   2.00-3.00   sec   112 MBytes   942 Mbits/sec    0    259 KBytes       
-[  5]   3.00-4.00   sec   112 MBytes   937 Mbits/sec    0    260 KBytes       
-[  5]   4.00-5.00   sec   113 MBytes   946 Mbits/sec    0    262 KBytes       
-[  5]   5.00-6.00   sec   112 MBytes   941 Mbits/sec    0    264 KBytes       
-[  5]   6.00-7.00   sec   112 MBytes   940 Mbits/sec    0    264 KBytes       
-[  5]   7.00-8.00   sec   112 MBytes   942 Mbits/sec    0    264 KBytes       
-[  5]   8.00-9.00   sec   112 MBytes   943 Mbits/sec    0    393 KBytes       
-[  5]   9.00-10.00  sec   113 MBytes   944 Mbits/sec    0    393 KBytes       
-- - - - - - - - - - - - - - - - - - - - - - - - -
 [ ID] Interval           Transfer     Bitrate         Retr
-[  5]   0.00-10.00  sec  1.10 GBytes   943 Mbits/sec    1             sender
-[  5]   0.00-10.00  sec  1.10 GBytes   941 Mbits/sec                  receiver
-- - - - - - - - - - - - - - - - - - - - - - - - -
+[  5]   0.00-1.00 sec    113 MBytes   949 Mbits/sec    1
+[  5]   1.00-2.00 sec    112 MBytes   942 Mbits/sec    0
+[  5]   2.00-3.00 sec    112 MBytes   938 Mbits/sec    0
+[  5]   3.00-4.00 sec    112 MBytes   941 Mbits/sec    0
+[  5]   4.00-5.00 sec    112 MBytes   943 Mbits/sec    0
+[  5]   5.00-6.00 sec    112 MBytes   941 Mbits/sec    0
+[  6]   6.00-7.00 sec    113 MBytes   947 Mbits/sec    0
+[  7]   7.00-8.00 sec    112 MBytes   941 Mbits/sec    0
+[  8]   8.00-9.00 sec    112 MBytes   941 Mbits/sec    0
+[  9]   9.00-10.00 sec   112 MBytes   939 Mbits/sec    0
+
 [ ID] Interval           Transfer     Bitrate
-[  5]   0.00-10.02  sec   289 MBytes   242 Mbits/sec                  receiver
------------------------------------------------------------
-Server listening on 5201 (test #2)
------------------------------------------------------------
+[  5]   0.00-10.00 sec   1.10 GBytes  943 Mbits/sec  sender
+[  5]   0.00-10.00 sec   1.10 GBytes  941 Mbits/sec  receiver
 ```
 
+The test achieved approximately **941 Mbit/s TCP throughput**.
 
+This result demonstrates that the driver can handle a continuous TCP
+data stream at a rate close to the practical throughput limit of Gigabit
+Ethernet.
 
-### Indexing linux kernel and use compile commands at the project
+------------------------------------------------------------------------
 
-1. Clone and compile linux kernel
+## 4. Linux Kernel Indexing with clangd
 
-2. Call `./scripts/clang-tools/gen_compile_commands.py`
+The Linux kernel source can be indexed by `clangd` to provide code
+navigation, symbol lookup, and completion when developing the driver.
 
-3. Write to settings.json(~/.config/Code/User/settings.json)
+### 4.1 Clone and configure the kernel
+
+Clone the Linux kernel repository and configure/build the kernel.
+
+### 4.2 Generate compilation database
+
+From the Linux kernel source directory, run:
+
+``` bash
+python3 scripts/clang-tools/gen_compile_commands.py
 ```
+
+This generates `compile_commands.json`, which contains compilation
+commands for kernel source files.
+
+### 4.3 Configure clangd in VS Code
+
+Open the VS Code user settings file:
+
+``` bash
+~/.config/Code/User/settings.json
+```
+
+Add the following configuration:
+
+``` json
 {
     "clangd.arguments": [
         "-j", "8",
@@ -260,7 +335,16 @@ Server listening on 5201 (test #2)
 }
 ```
 
-4. Restart clangd
-```
+Replace the compilation database path with the actual Linux kernel
+source directory.
+
+### 4.4 Restart clangd
+
+In VS Code, open the command palette:
+
+``` text
 Ctrl+Shift+P -> clangd: Restart language server
 ```
+
+After indexing, clangd can navigate Linux kernel definitions and
+references directly from the driver source code.
